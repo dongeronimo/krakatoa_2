@@ -26,9 +26,9 @@ class MainActivity : AppCompatActivity() {
     external fun stringFromJNI(): String
 
     companion object {
-        // Used to load the 'krakatoa' library on application startup.
         init {
-            System.loadLibrary("krakatoa")
+            //TODO: Switch between debug version and release version based on build type. Debug version ends with 'd' while release doesn't.
+            System.loadLibrary("krakatoad")
         }
     }
 }
