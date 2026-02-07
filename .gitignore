@@ -1,0 +1,97 @@
+# Built application files
+*.apk
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+release/
+
+# Gradle files
+.gradle/
+build/
+gradle-app.setting
+!gradle-wrapper.jar
+.gradletasknamecache
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Android Studio
+*.iml
+.idea/
+.DS_Store
+/captures
+.externalNativeBuild
+.cxx/
+
+# NDK
+obj/
+.externalNativeBuild/
+.cxx/
+
+# CMake
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+
+# Native libraries
+*.so
+*.a
+
+# Vulkan generated/compiled shaders
+*.spv
+
+# Vulkan validation layer logs
+vk_layer_settings.txt
+
+# Compiled shaders (keep .vert, .frag, etc source)
+# Adjust extensions based on your shader workflow
+*.spirv
+
+# Build artifacts
+libs/
+jniLibs/
+
+# Android Profiler
+*.hprof
+
+# Keystore files
+*.jks
+*.keystore
+
+# Signing files
+signing.properties
+key.properties
+
+# External native build
+.externalNativeBuild/
+
+# Version control
+.svn/
+.git/
+
+# OS specific
+Thumbs.db
+.DS_Store
+
+# Backup files
+*~
+*.swp
+*.bak
+
+# NDK/native debugging
+gdb.setup
+gdbserver
+gdb-cmd.txt
+
+# Memory dumps
+*.dmp
