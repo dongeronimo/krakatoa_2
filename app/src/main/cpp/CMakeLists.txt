@@ -14,7 +14,7 @@ FetchContent_Declare(
         glm
         GIT_REPOSITORY https://github.com/g-truc/glm.git
         GIT_TAG 0.9.9.8
-        GIT_SHALLOW TRUE  # Faster download
+        GIT_SHALLOW TRUE
 )
 
 # nlohmann/json - JSON library
@@ -40,10 +40,10 @@ set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_GLTF_IMPORTER ON CACHE BOOL "" FORCE)
-set(ASSIMP_BUILD_GLB_IMPORTER ON CACHE BOOL "" FORCE)  # ADICIONAR - GLB é comum
+set(ASSIMP_BUILD_GLB_IMPORTER ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_STL_EXPORTER ON CACHE BOOL "" FORCE)
 set(ASSIMP_ANDROID_JNIIOSYSTEM OFF CACHE BOOL "" FORCE)
-set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)  # ADICIONAR - você não exporta
+set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
 
 message(STATUS "Fetching dependencies...")
 FetchContent_MakeAvailable(glm assimp json)
@@ -57,21 +57,25 @@ find_library(log-lib log REQUIRED)
 find_library(android-lib android REQUIRED)
 find_library(vulkan-lib vulkan REQUIRED)
 find_library(jnigraphics-lib jnigraphics REQUIRED)
+# Camera2 NDK - Disponível a partir de API 24
+find_library(camera2ndk-lib camera2ndk REQUIRED)
+find_library(mediandk-lib mediandk REQUIRED)  # Para AImage/AImageReader
 
-# ARCore include path
-set(ARCORE_INCLUDE_DIR ${ANDROID_NDK}/sources/third_party/arcore/include)
+set(ARCORE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third-party.arcore.include)
 if(NOT EXISTS ${ARCORE_INCLUDE_DIR})
     message(WARNING "ARCore headers not found at ${ARCORE_INCLUDE_DIR}")
 endif()
 
 # Main library
 add_library(${CMAKE_PROJECT_NAME} SHARED
+        ar_loader.h
+        android_log.h
         native-lib.cpp
-        # ADICIONAR aqui outros .cpp conforme você criar
 )
 
-# Include directories
+# Include directories - adiciona tanto a raiz quanto a pasta arcore
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
         ${ARCORE_INCLUDE_DIR}
 )
 
@@ -81,29 +85,31 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         ${android-lib}
         ${log-lib}
         ${jnigraphics-lib}
+        ${camera2ndk-lib}
+        ${mediandk-lib}
         nlohmann_json::nlohmann_json
-        assimp::assimp  # Usar namespace target
-        glm::glm        # Usar namespace target
+        assimp::assimp
+        glm::glm
 )
 
 # Compile definitions
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         GLM_FORCE_RADIANS
         GLM_FORCE_DEPTH_ZERO_TO_ONE
-        GLM_FORCE_SIZE_T_LENGTH  # ADICIONAR - melhor com Vulkan
-        VK_USE_PLATFORM_ANDROID_KHR  # ADICIONAR - necessário para Vulkan Android
+        GLM_FORCE_SIZE_T_LENGTH
+        VK_USE_PLATFORM_ANDROID_KHR
 )
 
 # Compiler options
 target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
         -Wall
-        -Wextra  # ADICIONAR - mais warnings
+        -Wextra
         -Werror
         -Wno-unused-parameter
         -fexceptions
         -frtti
-        $<$<CONFIG:Debug>:-O0 -g>  # Debug sem otimização
-        $<$<CONFIG:Release>:-O3 -DNDEBUG>  # Release otimizado
+        $<$<CONFIG:Debug>:-O0 -g>
+        $<$<CONFIG:Release>:-O3 -DNDEBUG>
 )
 
 # Strip symbols in Release

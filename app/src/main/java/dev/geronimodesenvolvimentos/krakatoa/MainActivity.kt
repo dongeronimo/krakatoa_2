@@ -40,7 +40,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        vulkanSurfaceView.cleanup()
         super.onDestroy()
     }
 

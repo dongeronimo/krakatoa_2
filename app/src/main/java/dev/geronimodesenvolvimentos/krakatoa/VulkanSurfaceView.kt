@@ -1,13 +1,16 @@
 package dev.geronimodesenvolvimentos.krakatoa
 
+import android.app.Activity
 import android.content.Context
 import android.content.res.AssetManager
 import android.view.Choreographer
+import android.view.MotionEvent
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 
-class VulkanSurfaceView(context: Context,var assetManager: AssetManager): SurfaceView(context) {
+class VulkanSurfaceView(context: Context,var assetManager: AssetManager):
+    SurfaceView(context), SurfaceHolder.Callback{
 
     /**
      * A native method that is implemented by the 'krakatoa' native library,
@@ -21,66 +24,99 @@ class VulkanSurfaceView(context: Context,var assetManager: AssetManager): Surfac
         }
     }
 
-    private external fun initVulkan(surface: Surface): Boolean
-    private external fun resizeVulkan(width:Int, height:Int)
-    private external fun destroyVulkan()
-    private external fun renderFrame()
-    private val choreographer = Choreographer.getInstance()
-    private var isRendering = false;
-    /**
-     * Init: add the callbacks to the surface holder.
-     * When the surface is created it creates the vulkan context in the c++.
-     * When the surface is changed it resizes the vulkan swap chain and other things.
-     * When the surface is destroyed it destroys the vulkan context
-     * */
+    private var renderThread: RenderThread? = null
+    private var surfaceReady = false
+    private var arcoreActivated = false
     init {
-        holder.addCallback(object: SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) {
-                // Initialize Vulkan - surface is available
-                if(!initVulkan(holder.surface)){
-                    throw RuntimeException("Could not get the native surface")
-                }
-            }
+        holder.addCallback(this)
+    }
 
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                // Handle resize/orientation changes
-                resizeVulkan(width, height)
-            }
-
-            override fun surfaceDestroyed(holder: SurfaceHolder) {
-                // Cleanup Vulkan resources
-                destroyVulkan()
-            }
-        })
-    }
-    /**
-     * Views have no onResume. The activity that holds the view must call it.
-     * */
-    fun onResume() {
-        isRendering = true;
-        choreographer.postFrameCallback(frameCallback)
-    }
-    /**
-     * Views have no pause. The activity that holds the view must call it.
-     * */
-    fun onPause() {
-        isRendering = false;
-        choreographer.removeFrameCallback(frameCallback)
-    }
-    private val frameCallback = object: Choreographer.FrameCallback {
-        override fun doFrame(frameTimeInNanos: Long) {
-            if(isRendering){
-                renderFrame()
-                choreographer.postFrameCallback(this)
-            }
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        nativeOnSurfaceCreated(holder.surface, assetManager)
+        renderThread = RenderThread()
+        surfaceReady = true
+        (context as? MainActivity)?.let {
+            activateArcore(it, it);
         }
     }
 
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        val rotation = (context as Activity).windowManager.defaultDisplay.rotation
+        nativeOnSurfaceChanged(width, height, rotation)
+        renderThread?.start()
+    }
+
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        renderThread?.stopRendering()
+        renderThread = null
+        surfaceReady = false
+        arcoreActivated = false
+        nativeOnSurfaceDestroyed()
+    }
     fun activateArcore(ctx:MainActivity,activity: MainActivity) {
-
+        if (surfaceReady && activity.isCameraPermissionGranted() && !arcoreActivated) {
+            nativeActivateArcore(activity, activity)
+            arcoreActivated = true
+        }
     }
-
     fun cleanup() {
-
+        renderThread?.stopRendering()
+        renderThread = null
+        nativeOnSurfaceDestroyed()
+        nativeCleanup()
     }
+    /**
+     * It's the render thread that calls the native draw methods. Remember that the app is multithreaded
+     * and that one can't simply update things in the android main thread.
+     * */
+    private inner class RenderThread : Thread() {
+        @Volatile
+        private var running = true
+
+        override fun run() {
+            while (running) {
+                nativeOnDrawFrame()
+            }
+        }
+
+        fun stopRendering() {
+            running = false
+            join()
+        }
+    }
+    fun onResume() {
+        nativeOnResume()
+    }
+
+    fun onPause() {
+        nativeOnPause()
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                nativeOnTouchEvent(event.x, event.y, 0) // 0 = DOWN
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                nativeOnTouchEvent(event.x, event.y, 1) // 1 = MOVE
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                nativeOnTouchEvent(event.x, event.y, 2) // 2 = UP
+                return true
+            }
+        }
+        return super.onTouchEvent(event)
+    }
+
+    private external fun nativeOnSurfaceCreated(surface: Surface, assetManager: AssetManager)
+    private external fun nativeOnSurfaceChanged(width: Int, height: Int, rotation: Int)
+    private external fun nativeOnSurfaceDestroyed()
+    private external fun nativeOnDrawFrame()
+    private external fun nativeCleanup()
+    private external fun nativeOnResume()
+    private external fun nativeOnPause()
+    private external fun nativeActivateArcore(context: Context, activity: Activity)
+    private external fun nativeOnTouchEvent(x: Float, y: Float, action: Int)
 }
