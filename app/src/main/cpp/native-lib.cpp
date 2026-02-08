@@ -1,8 +1,11 @@
 #include <jni.h>
 #include <string>
 #include <cassert>
+#include <memory>
 #include "android_log.h"
 #include "ar_loader.h"
+#include "vk_context.h"
+std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -19,6 +22,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     bool loadedArcore = ar::LoadARCore();
     assert(loadedArcore);//i need arcore.
     // TODO: Create vulkan context (instance, physical device, device, semaphores, pipelines)
+    gVkContext = std::make_unique<graphics::VkContext>();
+    gVkContext->Initialize();
     // TODO: implement nativeOnSurfaceCreated()
 }
 extern "C"
@@ -47,6 +52,7 @@ JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEnv *env,
                                                                            jobject thiz) {
     // TODO: implement nativeCleanup()
+    gVkContext.release();
 }
 extern "C"
 JNIEXPORT void JNICALL

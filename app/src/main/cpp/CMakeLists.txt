@@ -71,6 +71,9 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         ar_loader.h
         android_log.h
         native-lib.cpp
+        vk_mem_alloc.h
+        vk_context.cpp
+        vk_context.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore

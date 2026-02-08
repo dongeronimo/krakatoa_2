@@ -6,7 +6,7 @@
         android:required="true" />
     <uses-feature
         android:name="android.hardware.vulkan.version"
-        android:version="0x400003"
+        android:version="0x403000"
         android:required="true" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="true" />
