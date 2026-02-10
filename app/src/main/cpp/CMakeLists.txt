@@ -74,6 +74,7 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         vk_mem_alloc.h
         vk_context.cpp
         vk_context.h
+        queue_family_indices.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
