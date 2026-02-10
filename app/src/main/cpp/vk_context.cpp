@@ -6,7 +6,49 @@
 #include <map>
 using namespace graphics;
 void fillApplicationInfo(VkApplicationInfo& info);
-void checkVulkan1_3();
+static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+        VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+        VkDebugUtilsMessageTypeFlagsEXT messageType,
+        const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+        void* pUserData) {
+
+    const char* typeStr = "GENERAL";
+    if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT) {
+        typeStr = "VALIDATION";
+    } else if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT) {
+        typeStr = "PERFORMANCE";
+    }
+
+    bool isError = (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT);
+
+    if (isError) {
+        LOGE("[VULKAN ERROR/%s] %s", typeStr, pCallbackData->pMessage);
+
+        if (pCallbackData->objectCount > 0) {
+            LOGE("  Objects involved: %u", pCallbackData->objectCount);
+            for (uint32_t i = 0; i < pCallbackData->objectCount; i++) {
+                LOGE("    [%u] Type=%d Handle=%p Name=%s",
+                     i,
+                     pCallbackData->pObjects[i].objectType,
+                     (void*)pCallbackData->pObjects[i].objectHandle,
+                     pCallbackData->pObjects[i].pObjectName ?
+                     pCallbackData->pObjects[i].pObjectName : "unnamed");
+            }
+        }
+
+        // Assert em debug, permite continuar em release (se desabilitar validation)
+        assert(false && "Vulkan validation error occurred!");
+
+    } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        LOGW("[VULKAN WARNING/%s] %s", typeStr, pCallbackData->pMessage);
+    } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) {
+        LOGI("[VULKAN INFO/%s] %s", typeStr, pCallbackData->pMessage);
+    } else {
+        LOGD("[VULKAN VERBOSE/%s] %s", typeStr, pCallbackData->pMessage);
+    }
+
+    return VK_FALSE;
+}
 
 VkContext::VkContext() {
 
@@ -16,13 +58,13 @@ VkContext::~VkContext() {
     if (device != VK_NULL_HANDLE) {
         vkDestroyDevice(device, nullptr);
     }
+    destroyDebugMessenger();
     if (instance != VK_NULL_HANDLE) {
         vkDestroyInstance(instance, nullptr);
     }
 }
 
 bool VkContext::createInstance() {
-    checkVulkan1_3();
     VkApplicationInfo appInfo;
     fillApplicationInfo(appInfo);
     auto extensions = getRequiredExtensions();
@@ -106,6 +148,10 @@ bool VkContext::Initialize() {
     bool result = createInstance();
     assert(result);
     LOGI("Vulkan instance created successfully");
+    result = setupDebugMessenger();
+    if (!result) {
+        LOGI("Debug messenger setup failed, continuing without it");
+    }
     result = pickPhysicalDevice();
     assert(result);
     result = createLogicalDevice();
@@ -123,20 +169,7 @@ void fillApplicationInfo(VkApplicationInfo& info) {
     info.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     info.apiVersion = VK_API_VERSION_1_3;  // IMPORTANTE: Vulkan 1.3!
 }
-void checkVulkan1_3() {
-    uint32_t apiVersion;
-    vkEnumerateInstanceVersion(&apiVersion);
 
-    uint32_t major = VK_API_VERSION_MAJOR(apiVersion);
-    uint32_t minor = VK_API_VERSION_MINOR(apiVersion);
-    uint32_t patch = VK_API_VERSION_PATCH(apiVersion);
-
-    LOGI("Vulkan API Version: %d.%d.%d", major, minor, patch);
-    if (apiVersion < VK_API_VERSION_1_3) {
-        LOGE("Vulkan 1.3 not supported! Available: %d.%d.%d", major, minor, patch);
-        assert(false);
-    }
-}
 
 std::vector<const char*> VkContext::getRequiredDeviceExtensions() {
     return {
@@ -412,4 +445,55 @@ bool VkContext::createLogicalDevice() {
 
     queueFamilies = indices;
     return true;
+}
+bool VkContext::setupDebugMessenger() {
+    VkDebugUtilsMessengerCreateInfoEXT createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+
+    // Severidades que queremos capturar
+    createInfo.messageSeverity =
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+
+    // Tipos de mensagem
+    createInfo.messageType =
+            VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+
+    createInfo.pfnUserCallback = debugCallback;
+    createInfo.pUserData = nullptr;  // Opcional: passar dados customizados
+
+    // Carregar function pointer (nao esta no core Vulkan 1.0)
+    auto func = (PFN_vkCreateDebugUtilsMessengerEXT)
+            vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+
+    if (func == nullptr) {
+        LOGE("vkCreateDebugUtilsMessengerEXT not available");
+        return false;
+    }
+
+    VkResult result = func(instance, &createInfo, nullptr, &debugMessenger);
+    if (result != VK_SUCCESS) {
+        LOGE("Failed to create debug messenger: %d", result);
+        return false;
+    }
+
+    LOGI("Debug messenger created successfully");
+    return true;
+}
+
+void VkContext::destroyDebugMessenger() {
+    if (debugMessenger != VK_NULL_HANDLE) {
+        auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)
+                vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+
+        if (func != nullptr) {
+            func(instance, debugMessenger, nullptr);
+        }
+
+        debugMessenger = VK_NULL_HANDLE;
+    }
 }
