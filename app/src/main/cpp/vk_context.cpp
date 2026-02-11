@@ -1,4 +1,3 @@
-
 #include "vk_context.h"
 #include "android_log.h"
 #include <cassert>
@@ -55,10 +54,17 @@ VkContext::VkContext() {
 }
 
 VkContext::~VkContext() {
+    destroySwapchain();
+    if (allocator != VK_NULL_HANDLE) {
+        vmaDestroyAllocator(allocator);
+    }
     if (device != VK_NULL_HANDLE) {
         vkDestroyDevice(device, nullptr);
     }
     destroyDebugMessenger();
+    if (surface != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(instance, surface, nullptr);
+    }
     if (instance != VK_NULL_HANDLE) {
         vkDestroyInstance(instance, nullptr);
     }
@@ -157,6 +163,8 @@ bool VkContext::Initialize() {
     result = createLogicalDevice();
     assert(result);
     LOGI("Vulkan Context initialized successfully!");
+    createVMA();
+    LOGI("VMA created.");
     return true;
 }
 
@@ -495,5 +503,289 @@ void VkContext::destroyDebugMessenger() {
         }
 
         debugMessenger = VK_NULL_HANDLE;
+    }
+}
+
+void VkContext::createVMA() {
+    VmaAllocatorCreateInfo allocatorInfo{};
+    allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_0; // já que está preso no 1.0
+    allocatorInfo.physicalDevice = physicalDevice;
+    allocatorInfo.device = device;
+    allocatorInfo.instance = instance;
+
+    VkResult result = vmaCreateAllocator(&allocatorInfo, &allocator);
+    assert(result == VK_SUCCESS);
+}
+
+bool VkContext::CreateSurface(ANativeWindow* window) {
+    VkAndroidSurfaceCreateInfoKHR createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
+    createInfo.window = window;
+
+    VkResult result = vkCreateAndroidSurfaceKHR(instance, &createInfo, nullptr, &surface);
+    if (result != VK_SUCCESS) {
+        LOGE("Failed to create Android surface: %d", result);
+        return false;
+    }
+
+    LOGI("Vulkan surface created");
+    return true;
+}
+
+SwapchainSupportDetails VkContext::querySwapchainSupport() {
+    SwapchainSupportDetails details;
+
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &details.capabilities);
+
+    uint32_t formatCount;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr);
+    if (formatCount > 0) {
+        details.formats.resize(formatCount);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount,
+                                             details.formats.data());
+    }
+
+    uint32_t presentModeCount;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, nullptr);
+    if (presentModeCount > 0) {
+        details.presentModes.resize(presentModeCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount,
+                                                  details.presentModes.data());
+    }
+
+    return details;
+}
+
+VkSurfaceFormatKHR VkContext::chooseSurfaceFormat(
+        const std::vector<VkSurfaceFormatKHR>& formats) {
+    // Prefer SRGB with 8-bit per channel
+    for (const auto& format : formats) {
+        if (format.format == VK_FORMAT_R8G8B8A8_SRGB &&
+            format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            return format;
+        }
+    }
+    // Fallback: UNORM
+    for (const auto& format : formats) {
+        if (format.format == VK_FORMAT_R8G8B8A8_UNORM &&
+            format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            return format;
+        }
+    }
+    // Last resort: whatever is available
+    LOGW("Preferred surface format not found, using first available");
+    return formats[0];
+}
+
+VkPresentModeKHR VkContext::choosePresentMode(
+        const std::vector<VkPresentModeKHR>& modes) {
+    // FIFO is guaranteed by the spec, acts as vsync
+    // Mailbox is preferred for low latency (triple buffering)
+    for (const auto& mode : modes) {
+        if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+            LOGI("Present mode: MAILBOX (triple buffering)");
+            return mode;
+        }
+    }
+
+    LOGI("Present mode: FIFO (vsync)");
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+VkExtent2D VkContext::chooseExtent(const VkSurfaceCapabilitiesKHR& capabilities,
+                                   uint32_t width, uint32_t height) {
+    // If currentExtent is not the special value 0xFFFFFFFF, the surface size is fixed
+    if (capabilities.currentExtent.width != UINT32_MAX) {
+        LOGI("Using surface's current extent: %ux%u",
+             capabilities.currentExtent.width, capabilities.currentExtent.height);
+        return capabilities.currentExtent;
+    }
+
+    // Otherwise, clamp our desired size to the surface limits
+    VkExtent2D extent = {width, height};
+    extent.width = std::max(capabilities.minImageExtent.width,
+                            std::min(capabilities.maxImageExtent.width, extent.width));
+    extent.height = std::max(capabilities.minImageExtent.height,
+                             std::min(capabilities.maxImageExtent.height, extent.height));
+
+    LOGI("Chosen swapchain extent: %ux%u", extent.width, extent.height);
+    return extent;
+}
+
+bool VkContext::CreateSwapchain(uint32_t width, uint32_t height) {
+    assert(surface != VK_NULL_HANDLE);
+    assert(device != VK_NULL_HANDLE);
+
+    SwapchainSupportDetails support = querySwapchainSupport();
+
+    if (support.formats.empty() || support.presentModes.empty()) {
+        LOGE("Swapchain not supported: no formats or present modes");
+        return false;
+    }
+
+    VkSurfaceFormatKHR surfaceFormat = chooseSurfaceFormat(support.formats);
+    VkPresentModeKHR presentMode = choosePresentMode(support.presentModes);
+    VkExtent2D extent = chooseExtent(support.capabilities, width, height);
+
+    // Request one more image than the minimum for triple buffering
+    uint32_t imageCount = support.capabilities.minImageCount + 1;
+    if (support.capabilities.maxImageCount > 0 &&
+        imageCount > support.capabilities.maxImageCount) {
+        imageCount = support.capabilities.maxImageCount;
+    }
+
+    LOGI("Swapchain config:");
+    LOGI("  Format: %d, ColorSpace: %d", surfaceFormat.format, surfaceFormat.colorSpace);
+    LOGI("  Present mode: %d", presentMode);
+    LOGI("  Extent: %ux%u", extent.width, extent.height);
+    LOGI("  Image count: %u (min=%u, max=%u)",
+         imageCount, support.capabilities.minImageCount, support.capabilities.maxImageCount);
+
+    VkSwapchainCreateInfoKHR createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    createInfo.surface = surface;
+    createInfo.minImageCount = imageCount;
+    createInfo.imageFormat = surfaceFormat.format;
+    createInfo.imageColorSpace = surfaceFormat.colorSpace;
+    createInfo.imageExtent = extent;
+    createInfo.imageArrayLayers = 1;
+    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+    // On Android, graphics and present are always the same family
+    createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    createInfo.queueFamilyIndexCount = 0;
+    createInfo.pQueueFamilyIndices = nullptr;
+
+    createInfo.preTransform = support.capabilities.currentTransform;
+    createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+    createInfo.presentMode = presentMode;
+    createInfo.clipped = VK_TRUE;
+    createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+    VkResult result = vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapchain);
+    if (result != VK_SUCCESS) {
+        LOGE("Failed to create swapchain: %d", result);
+        return false;
+    }
+
+    // Retrieve swapchain images
+    vkGetSwapchainImagesKHR(device, swapchain, &imageCount, nullptr);
+    swapchainImages.resize(imageCount);
+    vkGetSwapchainImagesKHR(device, swapchain, &imageCount, swapchainImages.data());
+
+    swapchainFormat = surfaceFormat.format;
+    swapchainExtent = extent;
+
+    LOGI("Swapchain created with %u images", imageCount);
+
+    createSwapchainImageViews();
+    return true;
+}
+
+void VkContext::createSwapchainImageViews() {
+    swapchainImageViews.resize(swapchainImages.size());
+
+    for (size_t i = 0; i < swapchainImages.size(); i++) {
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = swapchainImages[i];
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = swapchainFormat;
+        viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        VkResult result = vkCreateImageView(device, &viewInfo, nullptr,
+                                            &swapchainImageViews[i]);
+        assert(result == VK_SUCCESS);
+    }
+
+    LOGI("Created %zu swapchain image views", swapchainImageViews.size());
+}
+
+bool VkContext::RecreateSwapchain(uint32_t width, uint32_t height) {
+    vkDeviceWaitIdle(device);
+
+    VkSwapchainKHR oldSwapchain = swapchain;
+    swapchain = VK_NULL_HANDLE;
+
+    // Destroy image views (images are owned by the old swapchain)
+    for (auto iv : swapchainImageViews) {
+        vkDestroyImageView(device, iv, nullptr);
+    }
+    swapchainImageViews.clear();
+    swapchainImages.clear();
+
+    // Query fresh support details
+    SwapchainSupportDetails support = querySwapchainSupport();
+    VkSurfaceFormatKHR surfaceFormat = chooseSurfaceFormat(support.formats);
+    VkPresentModeKHR presentMode = choosePresentMode(support.presentModes);
+    VkExtent2D extent = chooseExtent(support.capabilities, width, height);
+
+    uint32_t imageCount = support.capabilities.minImageCount + 1;
+    if (support.capabilities.maxImageCount > 0 &&
+        imageCount > support.capabilities.maxImageCount) {
+        imageCount = support.capabilities.maxImageCount;
+    }
+
+    VkSwapchainCreateInfoKHR createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    createInfo.surface = surface;
+    createInfo.minImageCount = imageCount;
+    createInfo.imageFormat = surfaceFormat.format;
+    createInfo.imageColorSpace = surfaceFormat.colorSpace;
+    createInfo.imageExtent = extent;
+    createInfo.imageArrayLayers = 1;
+    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    createInfo.preTransform = support.capabilities.currentTransform;
+    createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+    createInfo.presentMode = presentMode;
+    createInfo.clipped = VK_TRUE;
+    createInfo.oldSwapchain = oldSwapchain;  // pass old for driver recycling
+
+    VkResult result = vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapchain);
+
+    // Destroy old swapchain after creating new one
+    if (oldSwapchain != VK_NULL_HANDLE) {
+        vkDestroySwapchainKHR(device, oldSwapchain, nullptr);
+    }
+
+    if (result != VK_SUCCESS) {
+        LOGE("Failed to recreate swapchain: %d", result);
+        return false;
+    }
+
+    vkGetSwapchainImagesKHR(device, swapchain, &imageCount, nullptr);
+    swapchainImages.resize(imageCount);
+    vkGetSwapchainImagesKHR(device, swapchain, &imageCount, swapchainImages.data());
+
+    swapchainFormat = surfaceFormat.format;
+    swapchainExtent = extent;
+
+    createSwapchainImageViews();
+
+    LOGI("Swapchain recreated: %ux%u, %u images", extent.width, extent.height, imageCount);
+    return true;
+}
+
+void VkContext::destroySwapchain() {
+    for (auto iv : swapchainImageViews) {
+        if (iv != VK_NULL_HANDLE) {
+            vkDestroyImageView(device, iv, nullptr);
+        }
+    }
+    swapchainImageViews.clear();
+    swapchainImages.clear();
+
+    if (swapchain != VK_NULL_HANDLE) {
+        vkDestroySwapchainKHR(device, swapchain, nullptr);
+        swapchain = VK_NULL_HANDLE;
     }
 }

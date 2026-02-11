@@ -75,6 +75,19 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         vk_context.cpp
         vk_context.h
         queue_family_indices.h
+        vma_impl.cpp
+        pipeline.h
+        pipeline.cpp
+        render_pass.h
+        render_pass.cpp
+        offscreen_render_pass.cpp
+        offscreen_render_pass.h
+        swap_chain_render_pass.cpp
+        swap_chain_render_pass.h
+        unshaded_opaque_pipeline.cpp
+        unshaded_opaque_pipeline.h
+        asset_loader.h
+        asset_loader.cpp
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
@@ -115,7 +128,9 @@ target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
         $<$<CONFIG:Debug>:-O0 -g>
         $<$<CONFIG:Release>:-O3 -DNDEBUG>
 )
-
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        MAX_FRAMES_IN_FLIGHT=3
+)
 # Strip symbols in Release
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
