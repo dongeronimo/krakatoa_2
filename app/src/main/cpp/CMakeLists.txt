@@ -84,10 +84,14 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         offscreen_render_pass.h
         swap_chain_render_pass.cpp
         swap_chain_render_pass.h
-        unshaded_opaque_pipeline.cpp
-        unshaded_opaque_pipeline.h
+        command_pool_manager.cpp
+        command_pool_manager.h
         asset_loader.h
         asset_loader.cpp
+        concatenate.h
+        pipeline_layout.h
+        frame_sync.cpp
+        frame_sync.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore

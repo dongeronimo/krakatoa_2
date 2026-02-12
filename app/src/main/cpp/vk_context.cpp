@@ -19,7 +19,10 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     }
 
     bool isError = (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT);
-
+    bool isAdrenoWarning = strstr(pCallbackData->pMessage, "VKDBGUTILWARN") != nullptr;
+    if (isAdrenoWarning) {
+        return VK_FALSE; // silencia completamente
+    }
     if (isError) {
         LOGE("[VULKAN ERROR/%s] %s", typeStr, pCallbackData->pMessage);
 
@@ -35,9 +38,12 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
             }
         }
 
-        // Assert em debug, permite continuar em release (se desabilitar validation)
-        assert(false && "Vulkan validation error occurred!");
-
+        // Adreno driver warnings come as errors with VKDBGUTILWARN prefix — skip them
+        if (!isAdrenoWarning) {
+            assert(false && "Vulkan validation error occurred!");
+        } else {
+            LOGW("Adreno driver warning (non-fatal), continuing");
+        }
     } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
         LOGW("[VULKAN WARNING/%s] %s", typeStr, pCallbackData->pMessage);
     } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) {

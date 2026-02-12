@@ -14,7 +14,9 @@ namespace graphics {
         void End(VkCommandBuffer cmd);
 
         VkRenderPass GetRenderPass() const { return renderPass; }
-
+        void setClearColor(float r, float g, float b, float a) {
+            clearValues[0].color = {{r, g, b, a}};
+        }
     protected:
         VkDevice device = VK_NULL_HANDLE;
         VkRenderPass renderPass = VK_NULL_HANDLE;
