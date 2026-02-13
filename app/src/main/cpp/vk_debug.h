@@ -14,14 +14,14 @@ namespace debug {
                        VkObjectType objectType, const std::string& name);
 
     /// Convenience overloads for each object type the project uses.
-    void SetObjectName(VkDevice device, VkFence object, const std::string& name);
-    void SetObjectName(VkDevice device, VkSemaphore object, const std::string& name);
-    void SetObjectName(VkDevice device, VkBuffer object, const std::string& name);
-    void SetObjectName(VkDevice device, VkImage object, const std::string& name);
-    void SetObjectName(VkDevice device, VkImageView object, const std::string& name);
-    void SetObjectName(VkDevice device, VkRenderPass object, const std::string& name);
-    void SetObjectName(VkDevice device, VkFramebuffer object, const std::string& name);
-    void SetObjectName(VkDevice device, VkPipeline object, const std::string& name);
+    void SetFenceName(VkDevice device, VkFence object, const std::string& name);
+    void SetSemaphoreName(VkDevice device, VkSemaphore object, const std::string& name);
+    void SetBufferName(VkDevice device, VkBuffer object, const std::string& name);
+    void SetImageName(VkDevice device, VkImage object, const std::string& name);
+    void SetImageViewName(VkDevice device, VkImageView object, const std::string& name);
+    void SetRenderPassName(VkDevice device, VkRenderPass object, const std::string& name);
+    void SetFramebufferName(VkDevice device, VkFramebuffer object, const std::string& name);
+    void SetPipelineName(VkDevice device, VkPipeline object, const std::string& name);
 
     /// Begin a debug label region on a command buffer (visible in RenderDoc).
     void BeginLabel(VkCommandBuffer cmd, const std::string& name,

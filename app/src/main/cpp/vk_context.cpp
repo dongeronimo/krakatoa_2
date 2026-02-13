@@ -687,7 +687,7 @@ bool VkContext::CreateSwapchain(uint32_t width, uint32_t height) {
     LOGI("Swapchain created with %u images", imageCount);
 
     for (uint32_t i = 0; i < imageCount; i++) {
-        debug::SetObjectName(device, swapchainImages[i],
+        debug::SetImageName(device, swapchainImages[i],
                              Concatenate("SwapchainImage[", i, "]"));
     }
 
@@ -720,7 +720,7 @@ void VkContext::createSwapchainImageViews() {
     }
 
     for (size_t i = 0; i < swapchainImageViews.size(); i++) {
-        debug::SetObjectName(device, swapchainImageViews[i],
+        debug::SetImageViewName(device, swapchainImageViews[i],
                              Concatenate("SwapchainImageView[", i, "]"));
     }
 
@@ -788,7 +788,7 @@ bool VkContext::RecreateSwapchain(uint32_t width, uint32_t height) {
     swapchainExtent = extent;
 
     for (uint32_t i = 0; i < imageCount; i++) {
-        debug::SetObjectName(device, swapchainImages[i],
+        debug::SetImageName(device, swapchainImages[i],
                              Concatenate("SwapchainImage[", i, "]"));
     }
 

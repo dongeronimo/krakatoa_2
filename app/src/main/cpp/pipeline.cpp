@@ -222,7 +222,7 @@ Pipeline::Pipeline(RenderPass* renderPass,
     VkResult result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
                                                &pipelineInfo, nullptr, &pipeline);
     assert(result == VK_SUCCESS);
-    debug::SetObjectName(device, pipeline,
+    debug::SetPipelineName(device, pipeline,
                          Concatenate("Pipeline:", config.vertexShader, "+", config.fragmentShader));
 
     // Cleanup shader modules (no longer needed after pipeline creation)

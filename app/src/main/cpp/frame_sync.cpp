@@ -16,7 +16,7 @@ FrameSync::FrameSync(VkDevice device, uint32_t swapchainImageCount)
         VkResult result = vkCreateFence(device, &fenceInfo, nullptr,
                                         &inFlightFences[i]);
         assert(result == VK_SUCCESS);
-        debug::SetObjectName(device, inFlightFences[i],
+        debug::SetFenceName(device, inFlightFences[i],
                              Concatenate("InFlightFence[", i, "]"));
     }
 
@@ -51,13 +51,13 @@ void FrameSync::CreatePerImageSyncObjects(uint32_t count) {
         result = vkCreateSemaphore(device, &semaphoreInfo, nullptr,
                                    &acquireSemaphores[i]);
         assert(result == VK_SUCCESS);
-        debug::SetObjectName(device, acquireSemaphores[i],
+        debug::SetSemaphoreName(device, acquireSemaphores[i],
                              Concatenate("AcquireSemaphore[", i, "]"));
 
         result = vkCreateSemaphore(device, &semaphoreInfo, nullptr,
                                    &renderFinishedSemaphores[i]);
         assert(result == VK_SUCCESS);
-        debug::SetObjectName(device, renderFinishedSemaphores[i],
+        debug::SetSemaphoreName(device, renderFinishedSemaphores[i],
                              Concatenate("RenderFinishedSemaphore[", i, "]"));
     }
 }

@@ -114,7 +114,7 @@ void SwapchainRenderPass::CreateRenderPass() {
 
     VkResult result = vkCreateRenderPass(device, &createInfo, nullptr, &renderPass);
     assert(result == VK_SUCCESS);
-    debug::SetObjectName(device, renderPass, "SwapchainRenderPass");
+    debug::SetRenderPassName(device, renderPass, "SwapchainRenderPass");
     LOGI("Swapchain VkRenderPass created (format=%d)", swapchainFormat);
 }
 
@@ -138,7 +138,7 @@ void SwapchainRenderPass::CreateDepthImage() {
     VkResult result = vmaCreateImage(allocator, &depthImageInfo, &allocInfo,
                                      &depthImage, &depthAllocation, nullptr);
     assert(result == VK_SUCCESS);
-    debug::SetObjectName(device, depthImage, "SwapchainDepthImage");
+    debug::SetImageName(device, depthImage, "SwapchainDepthImage");
 
     // Create image view
     VkImageViewCreateInfo viewInfo{};
@@ -154,7 +154,7 @@ void SwapchainRenderPass::CreateDepthImage() {
 
     result = vkCreateImageView(device, &viewInfo, nullptr, &depthImageView);
     assert(result == VK_SUCCESS);
-    debug::SetObjectName(device, depthImageView, "SwapchainDepthImageView");
+    debug::SetImageViewName(device, depthImageView, "SwapchainDepthImageView");
 
     LOGI("Swapchain depth image created (%ux%u)", extent.width, extent.height);
 }
@@ -180,7 +180,7 @@ void SwapchainRenderPass::CreateFramebuffers(
 
         VkResult result = vkCreateFramebuffer(device, &fbInfo, nullptr, &framebuffers[i]);
         assert(result == VK_SUCCESS);
-        debug::SetObjectName(device, framebuffers[i],
+        debug::SetFramebufferName(device, framebuffers[i],
                              Concatenate("SwapchainFramebuffer[", i, "]"));
     }
 

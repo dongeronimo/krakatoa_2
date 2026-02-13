@@ -60,7 +60,7 @@ StaticMesh::StaticMesh(VkDevice device,
                                  &vertexBuffer, &vertexAllocation, nullptr);
         assert(result == VK_SUCCESS);
         if (!name.empty()) {
-            debug::SetObjectName(device, vertexBuffer,
+            debug::SetBufferName(device, vertexBuffer,
                                  Concatenate(name, ":VertexBuffer"));
         }
 
@@ -111,7 +111,7 @@ StaticMesh::StaticMesh(VkDevice device,
                                  &indexBuffer, &indexAllocation, nullptr);
         assert(result == VK_SUCCESS);
         if (!name.empty()) {
-            debug::SetObjectName(device, indexBuffer,
+            debug::SetBufferName(device, indexBuffer,
                                  Concatenate(name, ":IndexBuffer"));
         }
 

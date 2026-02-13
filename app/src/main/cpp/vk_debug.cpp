@@ -41,42 +41,43 @@ void SetObjectName(VkDevice device, uint64_t objectHandle,
     pfnSetDebugUtilsObjectName(device, &nameInfo);
 }
 
-void SetObjectName(VkDevice device, VkFence object, const std::string& name) {
+
+void SetFenceName(VkDevice device, VkFence object, const std::string& name) {
     SetObjectName(device, reinterpret_cast<uint64_t>(object),
                   VK_OBJECT_TYPE_FENCE, name);
 }
 
-void SetObjectName(VkDevice device, VkSemaphore object, const std::string& name) {
+void SetSemaphoreName(VkDevice device, VkSemaphore object, const std::string& name) {
     SetObjectName(device, reinterpret_cast<uint64_t>(object),
                   VK_OBJECT_TYPE_SEMAPHORE, name);
 }
 
-void SetObjectName(VkDevice device, VkBuffer object, const std::string& name) {
+void SetBufferName(VkDevice device, VkBuffer object, const std::string& name) {
     SetObjectName(device, reinterpret_cast<uint64_t>(object),
                   VK_OBJECT_TYPE_BUFFER, name);
 }
 
-void SetObjectName(VkDevice device, VkImage object, const std::string& name) {
+void SetImageName(VkDevice device, VkImage object, const std::string& name) {
     SetObjectName(device, reinterpret_cast<uint64_t>(object),
                   VK_OBJECT_TYPE_IMAGE, name);
 }
 
-void SetObjectName(VkDevice device, VkImageView object, const std::string& name) {
+void SetImageViewName(VkDevice device, VkImageView object, const std::string& name) {
     SetObjectName(device, reinterpret_cast<uint64_t>(object),
                   VK_OBJECT_TYPE_IMAGE_VIEW, name);
 }
 
-void SetObjectName(VkDevice device, VkRenderPass object, const std::string& name) {
+void SetRenderPassName(VkDevice device, VkRenderPass object, const std::string& name) {
     SetObjectName(device, reinterpret_cast<uint64_t>(object),
                   VK_OBJECT_TYPE_RENDER_PASS, name);
 }
 
-void SetObjectName(VkDevice device, VkFramebuffer object, const std::string& name) {
+void SetFramebufferName(VkDevice device, VkFramebuffer object, const std::string& name) {
     SetObjectName(device, reinterpret_cast<uint64_t>(object),
                   VK_OBJECT_TYPE_FRAMEBUFFER, name);
 }
 
-void SetObjectName(VkDevice device, VkPipeline object, const std::string& name) {
+void SetPipelineName(VkDevice device, VkPipeline object, const std::string& name) {
     SetObjectName(device, reinterpret_cast<uint64_t>(object),
                   VK_OBJECT_TYPE_PIPELINE, name);
 }
