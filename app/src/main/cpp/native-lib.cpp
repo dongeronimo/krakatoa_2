@@ -45,7 +45,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     io::AssetLoader::initialize(nativeAssetManager);
 
     assert(loadedArcore);//i need arcore.
-    // TODO: Create vulkan context (instance, physical device, device, semaphores, pipelines)
+    // Create vulkan context (instance, physical device, device, semaphores, pipelines)
     gVkContext = std::make_unique<graphics::VkContext>();
     bool initializedOk = gVkContext->Initialize();
     assert(initializedOk);
@@ -77,10 +77,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     //Load meshes
     {
         io::MeshLoader meshLoader;
-        auto meshData = meshLoader.Load("meshes/cube.gltf");
+        auto meshData = meshLoader.Load("meshes/cube.glb");
         if (!meshData.vertices.empty() && !meshData.indices.empty()) {
             gStaticMeshes["cube"] = std::make_unique<graphics::StaticMesh>(
-                    gVkContext->GetDevice(),
                     gVkContext->GetAllocator(),
                     *gCommandPoolManager,
                     meshData.vertices.data(),

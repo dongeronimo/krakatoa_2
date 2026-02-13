@@ -26,7 +26,7 @@ namespace graphics {
          * @param indices        Index data
          * @param indexCount     Number of indices
          */
-        StaticMesh(VkDevice device,
+        StaticMesh(
                    VmaAllocator allocator,
                    CommandPoolManager& cmdManager,
                    const float* vertices,
@@ -45,7 +45,6 @@ namespace graphics {
         uint32_t GetVertexCount() const { return vertexCount; }
 
     private:
-        VkDevice device;
         VmaAllocator allocator;
 
         VkBuffer vertexBuffer = VK_NULL_HANDLE;

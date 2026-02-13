@@ -5,14 +5,14 @@
 #include <cstring>
 using namespace graphics;
 
-StaticMesh::StaticMesh(VkDevice device,
+StaticMesh::StaticMesh(
                        VmaAllocator allocator,
                        CommandPoolManager& cmdManager,
                        const float* vertices,
                        uint32_t vertexCount,
                        const uint32_t* indices,
                        uint32_t indexCount)
-        : device(device),
+        :
           allocator(allocator),
           vertexCount(vertexCount),
           indexCount(indexCount) {
