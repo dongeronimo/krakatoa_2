@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.h>
 #include <vector>
 #include <array>
+#include <string>
 namespace graphics {
     class RenderPass {
     public:
@@ -20,6 +21,9 @@ namespace graphics {
     protected:
         VkDevice device = VK_NULL_HANDLE;
         VkRenderPass renderPass = VK_NULL_HANDLE;
+
+        /// Debug name used for RenderDoc label sections
+        std::string debugName;
 
         /// Subclasses define their own clear values
         std::vector<VkClearValue> clearValues;

@@ -1,4 +1,5 @@
 #include "swap_chain_render_pass.h"
+#include "vk_debug.h"
 #include "android_log.h"
 #include <cassert>
 #include <array>
@@ -12,6 +13,7 @@ SwapchainRenderPass::SwapchainRenderPass(VkDevice device,
           swapchainFormat(swapchainFormat),
           depthFormat(depthFormat) {
     this->device = device;
+    this->debugName = "SwapchainRenderPass";
 
     // Clear values: color black, depth 1.0
     clearValues.resize(2);
@@ -112,6 +114,7 @@ void SwapchainRenderPass::CreateRenderPass() {
 
     VkResult result = vkCreateRenderPass(device, &createInfo, nullptr, &renderPass);
     assert(result == VK_SUCCESS);
+    debug::SetRenderPassName(device, renderPass, "SwapchainRenderPass");
     LOGI("Swapchain VkRenderPass created (format=%d)", swapchainFormat);
 }
 
@@ -135,6 +138,7 @@ void SwapchainRenderPass::CreateDepthImage() {
     VkResult result = vmaCreateImage(allocator, &depthImageInfo, &allocInfo,
                                      &depthImage, &depthAllocation, nullptr);
     assert(result == VK_SUCCESS);
+    debug::SetImageName(device, depthImage, "SwapchainDepthImage");
 
     // Create image view
     VkImageViewCreateInfo viewInfo{};
@@ -150,6 +154,7 @@ void SwapchainRenderPass::CreateDepthImage() {
 
     result = vkCreateImageView(device, &viewInfo, nullptr, &depthImageView);
     assert(result == VK_SUCCESS);
+    debug::SetImageViewName(device, depthImageView, "SwapchainDepthImageView");
 
     LOGI("Swapchain depth image created (%ux%u)", extent.width, extent.height);
 }
@@ -175,6 +180,8 @@ void SwapchainRenderPass::CreateFramebuffers(
 
         VkResult result = vkCreateFramebuffer(device, &fbInfo, nullptr, &framebuffers[i]);
         assert(result == VK_SUCCESS);
+        debug::SetFramebufferName(device, framebuffers[i],
+                             Concatenate("SwapchainFramebuffer[", i, "]"));
     }
 
     LOGI("Created %zu swapchain framebuffers (%ux%u)",

@@ -80,12 +80,14 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
         auto meshData = meshLoader.Load("meshes/cube.glb");
         if (!meshData.vertices.empty() && !meshData.indices.empty()) {
             gStaticMeshes["cube"] = std::make_unique<graphics::StaticMesh>(
+                    gVkContext->GetDevice(),
                     gVkContext->GetAllocator(),
                     *gCommandPoolManager,
                     meshData.vertices.data(),
                     meshData.vertexCount,
                     meshData.indices.data(),
-                    meshData.indexCount);
+                    meshData.indexCount,
+                    "cube");
         }
     }
 }

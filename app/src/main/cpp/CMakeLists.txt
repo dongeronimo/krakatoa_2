@@ -96,6 +96,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         mesh_loader.h
         static_mesh.cpp
         static_mesh.h
+        vk_debug.cpp
+        vk_debug.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore

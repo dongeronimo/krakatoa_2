@@ -1,4 +1,5 @@
 #include "frame_sync.h"
+#include "vk_debug.h"
 #include "android_log.h"
 #include <cassert>
 using namespace graphics;
@@ -15,6 +16,8 @@ FrameSync::FrameSync(VkDevice device, uint32_t swapchainImageCount)
         VkResult result = vkCreateFence(device, &fenceInfo, nullptr,
                                         &inFlightFences[i]);
         assert(result == VK_SUCCESS);
+        debug::SetFenceName(device, inFlightFences[i],
+                             Concatenate("InFlightFence[", i, "]"));
     }
 
     CreatePerImageSyncObjects(swapchainImageCount);
@@ -48,10 +51,14 @@ void FrameSync::CreatePerImageSyncObjects(uint32_t count) {
         result = vkCreateSemaphore(device, &semaphoreInfo, nullptr,
                                    &acquireSemaphores[i]);
         assert(result == VK_SUCCESS);
+        debug::SetSemaphoreName(device, acquireSemaphores[i],
+                             Concatenate("AcquireSemaphore[", i, "]"));
 
         result = vkCreateSemaphore(device, &semaphoreInfo, nullptr,
                                    &renderFinishedSemaphores[i]);
         assert(result == VK_SUCCESS);
+        debug::SetSemaphoreName(device, renderFinishedSemaphores[i],
+                             Concatenate("RenderFinishedSemaphore[", i, "]"));
     }
 }
 

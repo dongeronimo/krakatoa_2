@@ -4,6 +4,7 @@
 #include "vk_mem_alloc.h"
 #include <cstdint>
 #include <vector>
+#include <string>
 namespace graphics {
     class CommandPoolManager;
 
@@ -18,21 +19,23 @@ namespace graphics {
         /**
          * Create a static mesh and upload data to GPU.
          *
-         * @param device         Logical device
+         * @param device         Logical device (used for debug naming)
          * @param allocator      VMA allocator
          * @param cmdManager     Command pool manager (for staging upload + queue ownership transfer)
          * @param vertices       Interleaved vertex data (px py pz nx ny nz u v)
          * @param vertexCount    Number of vertices
          * @param indices        Index data
          * @param indexCount     Number of indices
+         * @param name           Debug name for this mesh (used to label buffers)
          */
-        StaticMesh(
+        StaticMesh(VkDevice device,
                    VmaAllocator allocator,
                    CommandPoolManager& cmdManager,
                    const float* vertices,
                    uint32_t vertexCount,
                    const uint32_t* indices,
-                   uint32_t indexCount);
+                   uint32_t indexCount,
+                   const std::string& name = "");
 
         ~StaticMesh();
 
