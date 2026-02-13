@@ -92,6 +92,10 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         pipeline_layout.h
         frame_sync.cpp
         frame_sync.h
+        mesh_loader.cpp
+        mesh_loader.h
+        static_mesh.cpp
+        static_mesh.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
