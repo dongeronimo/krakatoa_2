@@ -15,6 +15,8 @@
 #include <android/asset_manager_jni.h>
 #include "command_pool_manager.h"
 #include "frame_sync.h"
+#include "mesh_loader.h"
+#include "static_mesh.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::Pipeline> gUnshadedOpaquePipeline = nullptr;
@@ -22,6 +24,7 @@ std::unordered_map<std::string, VkPipelineLayout> pipelineLayouts;
 std::unordered_map<std::string, VkDescriptorSetLayout> descriptorSetLayouts;
 std::unique_ptr<graphics::CommandPoolManager> gCommandPoolManager = nullptr;
 std::unique_ptr<graphics::FrameSync> gFrameSync = nullptr;
+std::unordered_map<std::string, std::unique_ptr<graphics::StaticMesh>> gStaticMeshes;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -42,7 +45,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     io::AssetLoader::initialize(nativeAssetManager);
 
     assert(loadedArcore);//i need arcore.
-    // TODO: Create vulkan context (instance, physical device, device, semaphores, pipelines)
+    // Create vulkan context (instance, physical device, device, semaphores, pipelines)
     gVkContext = std::make_unique<graphics::VkContext>();
     bool initializedOk = gVkContext->Initialize();
     assert(initializedOk);
@@ -71,6 +74,20 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                                                                          gVkContext->getTransferQueue());
     //creates the frame sync object
     gFrameSync = std::make_unique<graphics::FrameSync>(gVkContext->GetDevice(), gVkContext->getSwapchainImageCount());
+    //Load meshes
+    {
+        io::MeshLoader meshLoader;
+        auto meshData = meshLoader.Load("meshes/cube.glb");
+        if (!meshData.vertices.empty() && !meshData.indices.empty()) {
+            gStaticMeshes["cube"] = std::make_unique<graphics::StaticMesh>(
+                    gVkContext->GetAllocator(),
+                    *gCommandPoolManager,
+                    meshData.vertices.data(),
+                    meshData.vertexCount,
+                    meshData.indices.data(),
+                    meshData.indexCount);
+        }
+    }
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -97,7 +114,8 @@ extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceDestroyed(JNIEnv *env,
                                                                                       jobject thiz) {
-    // TODO: implement nativeOnSurfaceDestroyed()
+    vkDeviceWaitIdle(gVkContext->GetDevice());
+    gStaticMeshes.clear();
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -162,6 +180,7 @@ JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEnv *env,
                                                                            jobject thiz) {
     vkDeviceWaitIdle(gVkContext->GetDevice());
+    gStaticMeshes.clear();
     for (const auto& [key, value] : descriptorSetLayouts) {
         vkDestroyDescriptorSetLayout(gVkContext->GetDevice(), value, nullptr);
     }
