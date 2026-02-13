@@ -29,7 +29,7 @@ MeshData MeshLoader::Load(const std::string& assetPath) {
     const aiScene* scene = importer.ReadFileFromMemory(
             fileData.data(),
             fileData.size(),
-            aiProcess_Triangulate | aiProcess_GenNormals | aiProcess_FlipUVs,
+            aiProcess_Triangulate | aiProcess_FlipUVs,
             hint.c_str());
 
     if (!scene || !scene->mRootNode || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE)) {
