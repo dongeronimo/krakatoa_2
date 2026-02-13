@@ -1,17 +1,19 @@
 #include "static_mesh.h"
 #include "command_pool_manager.h"
+#include "vk_debug.h"
 #include "android_log.h"
 #include <cassert>
 #include <cstring>
 using namespace graphics;
 
-StaticMesh::StaticMesh(
+StaticMesh::StaticMesh(VkDevice device,
                        VmaAllocator allocator,
                        CommandPoolManager& cmdManager,
                        const float* vertices,
                        uint32_t vertexCount,
                        const uint32_t* indices,
-                       uint32_t indexCount)
+                       uint32_t indexCount,
+                       const std::string& name)
         :
           allocator(allocator),
           vertexCount(vertexCount),
@@ -57,6 +59,10 @@ StaticMesh::StaticMesh(
         result = vmaCreateBuffer(allocator, &gpuInfo, &gpuAllocInfo,
                                  &vertexBuffer, &vertexAllocation, nullptr);
         assert(result == VK_SUCCESS);
+        if (!name.empty()) {
+            debug::SetObjectName(device, vertexBuffer,
+                                 Concatenate(name, ":VertexBuffer"));
+        }
 
         // Upload via transfer queue with ownership transfer
         cmdManager.UploadBuffer(stagingBuffer, vertexBuffer, vertexSize,
@@ -104,6 +110,10 @@ StaticMesh::StaticMesh(
         result = vmaCreateBuffer(allocator, &gpuInfo, &gpuAllocInfo,
                                  &indexBuffer, &indexAllocation, nullptr);
         assert(result == VK_SUCCESS);
+        if (!name.empty()) {
+            debug::SetObjectName(device, indexBuffer,
+                                 Concatenate(name, ":IndexBuffer"));
+        }
 
         // Upload via transfer queue with ownership transfer
         cmdManager.UploadBuffer(stagingBuffer, indexBuffer, indexSize,

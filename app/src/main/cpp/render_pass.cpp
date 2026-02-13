@@ -1,4 +1,5 @@
 #include "render_pass.h"
+#include "vk_debug.h"
 #include "android_log.h"
 #include <cassert>
 using namespace graphics;
@@ -6,6 +7,10 @@ using namespace graphics;
 void RenderPass::Begin(VkCommandBuffer cmd,
                        VkFramebuffer framebuffer,
                        VkExtent2D extent) {
+    if (!debugName.empty()) {
+        debug::BeginLabel(cmd, debugName);
+    }
+
     VkRenderPassBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     beginInfo.renderPass = renderPass;
@@ -35,6 +40,10 @@ void RenderPass::Begin(VkCommandBuffer cmd,
 
 void RenderPass::End(VkCommandBuffer cmd) {
     vkCmdEndRenderPass(cmd);
+
+    if (!debugName.empty()) {
+        debug::EndLabel(cmd);
+    }
 }
 
 void RenderPass::DestroyRenderPass() {

@@ -1,4 +1,5 @@
 #include "offscreen_render_pass.h"
+#include "vk_debug.h"
 #include "android_log.h"
 #include <cassert>
 #include <array>
@@ -17,6 +18,7 @@ OffscreenRenderPass::OffscreenRenderPass(VkDevice device,
           depthFormat(depthFormat),
           frameResources(MAX_FRAMES_IN_FLIGHT) {
     this->device = device;
+    this->debugName = "OffscreenRenderPass";
 
     clearValues.resize(2);
     clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
@@ -117,6 +119,7 @@ void OffscreenRenderPass::CreateRenderPass() {
 
     VkResult result = vkCreateRenderPass(device, &createInfo, nullptr, &renderPass);
     assert(result == VK_SUCCESS);
+    debug::SetObjectName(device, renderPass, "OffscreenRenderPass");
     LOGI("Offscreen VkRenderPass created");
 }
 
@@ -145,9 +148,13 @@ void OffscreenRenderPass::CreateImages() {
         VkResult result = vmaCreateImage(allocator, &colorImageInfo, &colorAllocInfo,
                                          &res.colorImage, &res.colorAllocation, nullptr);
         assert(result == VK_SUCCESS);
+        debug::SetObjectName(device, res.colorImage,
+                             Concatenate("OffscreenColorImage[", i, "]"));
 
         res.colorImageView = CreateImageView(res.colorImage, colorFormat,
                                              VK_IMAGE_ASPECT_COLOR_BIT);
+        debug::SetObjectName(device, res.colorImageView,
+                             Concatenate("OffscreenColorImageView[", i, "]"));
 
         // --- Depth image ---
         VkImageCreateInfo depthImageInfo{};
@@ -169,9 +176,13 @@ void OffscreenRenderPass::CreateImages() {
         result = vmaCreateImage(allocator, &depthImageInfo, &depthAllocInfo,
                                 &res.depthImage, &res.depthAllocation, nullptr);
         assert(result == VK_SUCCESS);
+        debug::SetObjectName(device, res.depthImage,
+                             Concatenate("OffscreenDepthImage[", i, "]"));
 
         res.depthImageView = CreateImageView(res.depthImage, depthFormat,
                                              VK_IMAGE_ASPECT_DEPTH_BIT);
+        debug::SetObjectName(device, res.depthImageView,
+                             Concatenate("OffscreenDepthImageView[", i, "]"));
 
         LOGI("Offscreen frame resources [%u] created (%ux%u)", i, width, height);
     }
@@ -194,6 +205,8 @@ void OffscreenRenderPass::CreateFramebuffers() {
 
         VkResult result = vkCreateFramebuffer(device, &fbInfo, nullptr, &res.framebuffer);
         assert(result == VK_SUCCESS);
+        debug::SetObjectName(device, res.framebuffer,
+                             Concatenate("OffscreenFramebuffer[", i, "]"));
     }
 
     LOGI("Created %u offscreen framebuffers (%ux%u)",

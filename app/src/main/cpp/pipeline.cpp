@@ -1,7 +1,7 @@
 #include "pipeline.h"
 #include "render_pass.h"
 #include "asset_loader.h"
-#include "concatenate.h"
+#include "vk_debug.h"
 #include "android_log.h"
 #include <cassert>
 #include <array>
@@ -222,6 +222,8 @@ Pipeline::Pipeline(RenderPass* renderPass,
     VkResult result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
                                                &pipelineInfo, nullptr, &pipeline);
     assert(result == VK_SUCCESS);
+    debug::SetObjectName(device, pipeline,
+                         Concatenate("Pipeline:", config.vertexShader, "+", config.fragmentShader));
 
     // Cleanup shader modules (no longer needed after pipeline creation)
     vkDestroyShaderModule(device, vs, nullptr);

@@ -1,4 +1,5 @@
 #include "vk_context.h"
+#include "vk_debug.h"
 #include "android_log.h"
 #include <cassert>
 #include <set>
@@ -160,6 +161,7 @@ bool VkContext::Initialize() {
     bool result = createInstance();
     assert(result);
     LOGI("Vulkan instance created successfully");
+    debug::Initialize(instance);
     result = setupDebugMessenger();
     if (!result) {
         LOGI("Debug messenger setup failed, continuing without it");
@@ -684,6 +686,11 @@ bool VkContext::CreateSwapchain(uint32_t width, uint32_t height) {
 
     LOGI("Swapchain created with %u images", imageCount);
 
+    for (uint32_t i = 0; i < imageCount; i++) {
+        debug::SetObjectName(device, swapchainImages[i],
+                             Concatenate("SwapchainImage[", i, "]"));
+    }
+
     createSwapchainImageViews();
     return true;
 }
@@ -710,6 +717,11 @@ void VkContext::createSwapchainImageViews() {
         VkResult result = vkCreateImageView(device, &viewInfo, nullptr,
                                             &swapchainImageViews[i]);
         assert(result == VK_SUCCESS);
+    }
+
+    for (size_t i = 0; i < swapchainImageViews.size(); i++) {
+        debug::SetObjectName(device, swapchainImageViews[i],
+                             Concatenate("SwapchainImageView[", i, "]"));
     }
 
     LOGI("Created %zu swapchain image views", swapchainImageViews.size());
@@ -774,6 +786,11 @@ bool VkContext::RecreateSwapchain(uint32_t width, uint32_t height) {
 
     swapchainFormat = surfaceFormat.format;
     swapchainExtent = extent;
+
+    for (uint32_t i = 0; i < imageCount; i++) {
+        debug::SetObjectName(device, swapchainImages[i],
+                             Concatenate("SwapchainImage[", i, "]"));
+    }
 
     createSwapchainImageViews();
 
