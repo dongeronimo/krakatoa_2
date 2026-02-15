@@ -98,6 +98,12 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         static_mesh.h
         vk_debug.cpp
         vk_debug.h
+        rdo.cpp
+        rdo.h
+        renderable.h
+        renderable.cpp
+        transform.h
+        transform.cpp
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
@@ -140,6 +146,7 @@ target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
 )
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         MAX_FRAMES_IN_FLIGHT=3
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
 )
 # Strip symbols in Release
 if(CMAKE_BUILD_TYPE STREQUAL "Release")

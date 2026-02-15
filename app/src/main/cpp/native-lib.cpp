@@ -17,6 +17,9 @@
 #include "frame_sync.h"
 #include "mesh_loader.h"
 #include "static_mesh.h"
+#include "rdo.h"
+#include "renderable.h"
+#include "transform.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::Pipeline> gUnshadedOpaquePipeline = nullptr;
@@ -25,6 +28,8 @@ std::unordered_map<std::string, VkDescriptorSetLayout> descriptorSetLayouts;
 std::unique_ptr<graphics::CommandPoolManager> gCommandPoolManager = nullptr;
 std::unique_ptr<graphics::FrameSync> gFrameSync = nullptr;
 std::unordered_map<std::string, std::unique_ptr<graphics::StaticMesh>> gStaticMeshes;
+
+graphics::Renderable cube("cube");
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -108,8 +113,10 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                   gVkContext->getSwapchainExtent());
     gUnshadedOpaquePipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
                                                                    gVkContext->GetDevice(),
+                                                                   gVkContext->GetAllocator(),
                                                                    graphics::UnshadedOpaqueConfig(),
-                                                                   pipelineLayouts["unshaded_opaque"]);
+                                                                   pipelineLayouts["unshaded_opaque"],
+                                                                   descriptorSetLayouts["unshaded_opaque"]);
     gFrameSync->RecreateForSwapchain(gVkContext->getSwapchainImageCount());
 }
 extern "C"
@@ -143,6 +150,22 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gSwapChainRenderPass->Begin(cmd,
                                 gSwapChainRenderPass->GetFramebuffer(imageIndex),
                                 gVkContext->getSwapchainExtent());
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+    // TODO: Set camera
+    glm::vec3 cameraPos = {3.0f, 5.0f, 7.0f};
+    glm::mat4 view = glm::lookAt(cameraPos, glm::vec3(0,0,0), glm::vec3(0,1,0));
+    glm::mat4 proj = glm::perspective(glm::radians(45.0f),
+                                      gSwapChainRenderPass->GetExtent().width/(float)gSwapChainRenderPass->GetExtent().height,
+                                      0.1f, 100.0f);
+    // TODO: Fill RDO
+    graphics::RDO rdo;
+    rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
+    rdo.Add(graphics::RDO::Keys::MODEL_MAT, cube.GetTransform().GetWorldMatrix());
+    rdo.Add(graphics::RDO::Keys::VIEW_MAT, view);
+    rdo.Add(graphics::RDO::Keys::PROJ_MAT, proj);
+    // TODO: Draw the renderable with it's rdo
+    gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube);
+    ////////////////////////////////////////////////////////////////////////////////////////////////
     gSwapChainRenderPass->End(cmd);
     gCommandPoolManager->EndFrame();
 

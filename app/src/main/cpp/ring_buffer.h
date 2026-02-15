@@ -6,7 +6,7 @@ namespace utils {
     template<typename T>
     class RingBuffer {
     public:
-        RingBuffer(uint32_t items) : ringBuffer(items), cursor(0) {
+        RingBuffer(uint32_t items = MAX_FRAMES_IN_FLIGHT) : ringBuffer(items), cursor(0) {
             assert(items > 0);
         }
 

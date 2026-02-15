@@ -22,14 +22,15 @@ android {
                 // Adicionar flags úteis para debug
                 arguments += listOf(
                     "-DANDROID_STL=c++_shared",
-                    "-DANDROID_PLATFORM=android-33"
+                    "-DANDROID_PLATFORM=android-33",
+                    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
                 )
             }
         }
 
         ndk {
             // Especificar ABIs - remover x86 se não precisar do emulador
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters += listOf("arm64-v8a")
         }
     }
 

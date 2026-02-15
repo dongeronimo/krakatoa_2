@@ -5,12 +5,82 @@
 #include "android_log.h"
 #include <cassert>
 #include <array>
+#include "renderable.h"
+#include "rdo.h"
+#include "concatenate.h"
+#include "vk_debug.h"
 using namespace graphics;
 
+template<typename T>
+void createGpuUniformBuffers(
+        VmaAllocator allocator,
+        uint32_t count,
+        utils::RingBuffer<VkBuffer>& gpuBuffers,
+        utils::RingBuffer<VmaAllocation>& gpuAllocations)
+{
+    for (uint32_t i = 0; i < count; i++) {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = sizeof(T);
+        bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+                           VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VmaAllocationCreateInfo allocInfo{};
+        allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+
+        VkBuffer& buffer = gpuBuffers.Next();
+        VmaAllocation& allocation = gpuAllocations.Next();
+
+        if (vmaCreateBuffer(allocator, &bufferInfo, &allocInfo,
+                            &buffer, &allocation, nullptr) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create GPU uniform buffer");
+        }
+    }
+}
+template<typename T>
+void createStagingUniformBuffers(
+        VmaAllocator allocator,
+        uint32_t count,
+        utils::RingBuffer<VkBuffer>& stagingBuffers,
+        utils::RingBuffer<VmaAllocation>& stagingAllocations,
+        utils::RingBuffer<void*>& mappedData)
+{
+    for (uint32_t i = 0; i < count; i++) {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = sizeof(T);
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VmaAllocationCreateInfo allocInfo{};
+        allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+        allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                          VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+        VmaAllocationInfo mapInfo{};
+        VkBuffer& buffer = stagingBuffers.Next();
+        VmaAllocation& allocation = stagingAllocations.Next();
+
+        if (vmaCreateBuffer(allocator, &bufferInfo, &allocInfo,
+                            &buffer, &allocation, &mapInfo) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create staging uniform buffer");
+        }
+
+        void*& mapped = mappedData.Next();
+        mapped = mapInfo.pMappedData;
+    }
+}
 // ============================================================
 // Config factories
 // ============================================================
 
+struct UnshadedOpaqueUniformBuffer {
+    float model[16];
+    float view[16];
+    float projection[16];
+    float color[4];
+};
 PipelineConfig graphics::UnshadedOpaqueConfig() {
     PipelineConfig config;
     config.vertexShader = "unshaded_opaque.vert";
@@ -19,6 +89,37 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
     config.depthWriteEnable = true;
     config.blendEnable = false;
     config.cullMode = VK_CULL_MODE_BACK_BIT;
+    /**
+     * Expects MODEL, VIEW, PROJECTION, COLOR
+     * */
+    config.renderCallback = [](VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline){
+        // TODO: Get the descriptor set for this object
+        std::shared_ptr<UniformBuffer> uniformBuffer  = pipeline.GetUniformBuffer(obj->GetId());
+        if(uniformBuffer == nullptr){
+            //TODO: Create the buffers and store in the pipeline
+            std::shared_ptr<UniformBuffer> ub = std::make_unique<UniformBuffer>();
+            createGpuUniformBuffers<UnshadedOpaqueUniformBuffer>(pipeline.GetAllocator(),
+                                    MAX_FRAMES_IN_FLIGHT, ub->gpuBuffer, ub->gpuBufferAllocation);
+            createStagingUniformBuffers<UnshadedOpaqueUniformBuffer>(pipeline.GetAllocator(),
+                                                                     MAX_FRAMES_IN_FLIGHT,
+                                                                     ub->stagingBuffer,
+                                                                     ub->stagingBufferAllocation,ub->mappedData);
+            ub->size = sizeof(UnshadedOpaqueUniformBuffer);
+            ub->id = obj->GetId();
+            ub->deathCounter = 100;
+            pipeline.AddUniformBuffer(obj->GetId(), ub);
+            //Give a name to the relevant objects.
+            for(auto i=0; i<MAX_FRAMES_IN_FLIGHT;i++){
+                auto name1 = Concatenate("UnshadedOpaqueBuffer[", i, "]");
+                debug::SetBufferName(pipeline.GetDevice(), ub->gpuBuffer[i], name1);
+                auto name2 = Concatenate("UnshadedOpaqueBuffer(staging)[", i, "]");
+                debug::SetBufferName(pipeline.GetDevice(), ub->stagingBuffer[i], name2);
+            }
+        }
+        // TODO: Fill it with new data
+
+        // TODO: Draw
+    };
     return config;
 }
 
@@ -36,6 +137,9 @@ PipelineConfig graphics::TranslucentConfig() {
     config.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
     config.alphaBlendOp = VK_BLEND_OP_ADD;
     config.cullMode = VK_CULL_MODE_NONE;
+    config.renderCallback = [](VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline ){
+
+    };
     return config;
 }
 
@@ -49,6 +153,9 @@ PipelineConfig graphics::WireframeConfig() {
     config.blendEnable = false;
     config.cullMode = VK_CULL_MODE_NONE;
     config.lineWidth = 1.0f;
+    config.renderCallback = [](VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline){
+
+    };
     return config;
 }
 
@@ -79,10 +186,13 @@ VkShaderModule Pipeline::CreateShaderModule(const std::vector<uint8_t>& data) {
 
 Pipeline::Pipeline(RenderPass* renderPass,
                    VkDevice device,
+                   VmaAllocator allocator,
                    const PipelineConfig& config,
-                   VkPipelineLayout pipelineLayout)
-        : device(device) {
-
+                   VkPipelineLayout pipelineLayout,
+                   VkDescriptorSetLayout descriptorSetLayout)
+        : device(device), allocator(allocator), pipelineLayout(pipelineLayout), descriptorSetLayout(descriptorSetLayout) {
+    assert(this->pipelineLayout != VK_NULL_HANDLE);
+    assert(this->descriptorSetLayout != VK_NULL_HANDLE);
     // --- Shader stages ---
     std::vector<uint8_t> vsSrc = LoadShaderBytes(config.vertexShader);
     std::vector<uint8_t> fsSrc = LoadShaderBytes(config.fragmentShader);
@@ -229,11 +339,13 @@ Pipeline::Pipeline(RenderPass* renderPass,
     vkDestroyShaderModule(device, vs, nullptr);
     vkDestroyShaderModule(device, fs, nullptr);
 
+    renderCallback = config.renderCallback;
     LOGI("Pipeline created (vs=%s, fs=%s)", config.vertexShader.c_str(),
          config.fragmentShader.c_str());
 }
 
 Pipeline::~Pipeline() {
+    //TODO: Destroy the uniform buffers
     if (pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, pipeline, nullptr);
         LOGI("Pipeline destroyed");
@@ -242,4 +354,30 @@ Pipeline::~Pipeline() {
 
 void Pipeline::Bind(VkCommandBuffer cmd) const {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+}
+
+void Pipeline::Draw(VkCommandBuffer cmd, RDO *rdo, Renderable *renderable) {
+    renderCallback(cmd, rdo, renderable, *this);
+}
+
+void Pipeline::AddUniformBuffer(uint64_t id, std::shared_ptr<UniformBuffer> b) {
+    assert(uniformBuffers.count(id) == 0);
+    uniformBuffers.insert({id, b});
+}
+
+void Pipeline::DecreaseDeathCounter() {
+    std::vector<std::shared_ptr<UniformBuffer>> toDie;
+    for(auto& [key, value] : uniformBuffers){
+        value->deathCounter--;
+        if(value->deathCounter <= 0){
+            toDie.push_back(value);
+        }
+    }
+    for(auto& dead:toDie){
+        for (uint32_t i = 0; i < dead->gpuBuffer.Size(); i++) {
+            vmaDestroyBuffer(allocator, dead->gpuBuffer[i], dead->gpuBufferAllocation[i]);
+            vmaDestroyBuffer(allocator, dead->stagingBuffer[i], dead->stagingBufferAllocation[i]);
+        }
+        uniformBuffers.erase(dead->id);
+    }
 }

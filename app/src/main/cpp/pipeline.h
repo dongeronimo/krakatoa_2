@@ -3,9 +3,16 @@
 #include <string>
 #include <vector>
 #include <vulkan/vulkan_core.h>
-namespace graphics {
+#include <functional>
+#include <unordered_map>
+#include "ring_buffer.h"
+#include <vk_mem_alloc.h>
 
+namespace graphics {
+    class Renderable;
+    class RDO;
     class RenderPass;
+    class Pipeline;
 
     /**
      * Configuration for the variable parts of a graphics pipeline.
@@ -45,8 +52,29 @@ namespace graphics {
         // --- Input assembly ---
         VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         bool primitiveRestartEnable = false;
+        // --- Actual drawing, varies between the pipelines bc each pipeline uses different fields and send different data to the shaders
+        std::function<void(VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline)> renderCallback;
     };
-
+    /**
+     * The uniform buffer for an object in a pipeline.
+     * While the amount of buffers will be the same, based on the ring buffer,
+     * the size won't, since each pipeline will have it's own uniforms.
+     *
+     * The death counter thing is to do some garbage collection based on last time used.
+     * THe idea is that the pipeline will sweep its uniforms buffers table, decrementing the counter.
+     * Any buffer with counter == 0 will be deleted. Every time a buffer is used the counter increases.
+     * I need this because if i don't delete unused buffers the gpu will eventually run out of memory.
+     * */
+    struct UniformBuffer {
+        utils::RingBuffer<VkBuffer> gpuBuffer;
+        utils::RingBuffer<VkBuffer> stagingBuffer;
+        utils::RingBuffer<VmaAllocation> gpuBufferAllocation;
+        utils::RingBuffer<VmaAllocation> stagingBufferAllocation;
+        utils::RingBuffer<void*> mappedData;
+        size_t size;
+        uint64_t id;
+        uint32_t deathCounter;
+    };
     // --- Config factories ---
 
     /** Opaque unshaded: depth test+write, no blending, backface culling */
@@ -75,22 +103,43 @@ namespace graphics {
     public:
         Pipeline(RenderPass* renderPass,
                  VkDevice device,
+                 VmaAllocator allocator,
                  const PipelineConfig& config,
-                 VkPipelineLayout pipelineLayout);
+                 VkPipelineLayout pipelineLayout,
+                 VkDescriptorSetLayout descriptorSetLayout);
         ~Pipeline();
 
         // Non-copyable
         Pipeline(const Pipeline&) = delete;
         Pipeline& operator=(const Pipeline&) = delete;
-
+        /**
+         * Binds the pipeline, that's before we draw.
+         * */
         void Bind(VkCommandBuffer cmd) const;
+        /**
+         * Draw the object using the callback defined in PipelineConfig
+         * */
+        void Draw(VkCommandBuffer cmd, RDO* rdo, Renderable* renderable);
         VkPipeline GetPipeline() const { return pipeline; }
-
+        VkDevice GetDevice() const {return device;}
+        VmaAllocator GetAllocator()const {return allocator;}
+        std::shared_ptr<UniformBuffer> GetUniformBuffer(uint64_t id) {
+            if(uniformBuffers.count(id) == 0)
+                return nullptr;
+            else
+                return uniformBuffers[id];
+        }
+        void AddUniformBuffer(uint64_t id, std::shared_ptr<UniformBuffer> b);
     private:
-        VkDevice device;
+        VkDevice device = VK_NULL_HANDLE;
+        VmaAllocator allocator = VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
-
+        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+        VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
+        std::function<void(VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline)> renderCallback;
         VkShaderModule CreateShaderModule(const std::vector<uint8_t>& data);
+        std::unordered_map<uint64_t, std::shared_ptr<UniformBuffer>> uniformBuffers;
+        void DecreaseDeathCounter();
     };
 }
 #endif //KRAKATOA_PIPELINE_H
