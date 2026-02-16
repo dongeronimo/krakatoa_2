@@ -90,6 +90,9 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
     config.depthWriteEnable = true;
     config.blendEnable = false;
     config.cullMode = VK_CULL_MODE_BACK_BIT;
+    config.descriptorPoolSizes = {
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_DESCRIPTOR_SETS_PER_POOL}
+    };
     /**
      * Expects MODEL, VIEW, PROJECTION, COLOR
      * */
@@ -167,6 +170,9 @@ PipelineConfig graphics::TranslucentConfig() {
     config.depthTestEnable = true;
     config.depthWriteEnable = false;  // don't write depth for translucent
     config.blendEnable = true;
+    config.descriptorPoolSizes = {
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_DESCRIPTOR_SETS_PER_POOL}
+    };
     config.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
     config.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     config.colorBlendOp = VK_BLEND_OP_ADD;
@@ -190,6 +196,9 @@ PipelineConfig graphics::WireframeConfig() {
     config.blendEnable = false;
     config.cullMode = VK_CULL_MODE_NONE;
     config.lineWidth = 1.0f;
+    config.descriptorPoolSizes = {
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_DESCRIPTOR_SETS_PER_POOL}
+    };
     config.renderCallback = [](VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline, uint32_t frameIndex){
 
     };
@@ -376,6 +385,18 @@ Pipeline::Pipeline(RenderPass* renderPass,
     vkDestroyShaderModule(device, vs, nullptr);
     vkDestroyShaderModule(device, fs, nullptr);
 
+    // --- Descriptor pool (config-driven sizes) ---
+    assert(!config.descriptorPoolSizes.empty());
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = MAX_DESCRIPTOR_SETS_PER_POOL;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(config.descriptorPoolSizes.size());
+    poolInfo.pPoolSizes = config.descriptorPoolSizes.data();
+    result = vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool);
+    assert(result == VK_SUCCESS);
+    debug::SetDescriptorPoolName(device, descriptorPool,
+                                 Concatenate("DescPool:", config.vertexShader, "+", config.fragmentShader));
+
     renderCallback = config.renderCallback;
     LOGI("Pipeline created (vs=%s, fs=%s)", config.vertexShader.c_str(),
          config.fragmentShader.c_str());
@@ -383,6 +404,9 @@ Pipeline::Pipeline(RenderPass* renderPass,
 
 Pipeline::~Pipeline() {
     //TODO: Destroy the uniform buffers
+    if (descriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+    }
     if (pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, pipeline, nullptr);
         LOGI("Pipeline destroyed");
@@ -395,6 +419,19 @@ void Pipeline::Bind(VkCommandBuffer cmd) const {
 
 void Pipeline::Draw(VkCommandBuffer cmd, RDO *rdo, Renderable *renderable, uint32_t frameIndex) {
     renderCallback(cmd, rdo, renderable, *this, frameIndex);
+}
+
+VkDescriptorSet Pipeline::AllocateDescriptorSet() {
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &descriptorSetLayout;
+
+    VkDescriptorSet descriptorSet;
+    VkResult result = vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet);
+    assert(result == VK_SUCCESS);
+    return descriptorSet;
 }
 
 void Pipeline::AddUniformBuffer(uint64_t id, std::shared_ptr<UniformBuffer> b) {

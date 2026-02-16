@@ -82,6 +82,11 @@ void SetPipelineName(VkDevice device, VkPipeline object, const std::string& name
                   VK_OBJECT_TYPE_PIPELINE, name);
 }
 
+void SetDescriptorPoolName(VkDevice device, VkDescriptorPool object, const std::string& name) {
+    SetObjectName(device, reinterpret_cast<uint64_t>(object),
+                  VK_OBJECT_TYPE_DESCRIPTOR_POOL, name);
+}
+
 void BeginLabel(VkCommandBuffer cmd, const std::string& name,
                 float r, float g, float b, float a) {
     if (!pfnCmdBeginDebugUtilsLabel) return;
