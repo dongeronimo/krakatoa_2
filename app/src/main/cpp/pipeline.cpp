@@ -18,41 +18,14 @@ void createGpuUniformBuffers(
         VmaAllocator allocator,
         uint32_t count,
         utils::RingBuffer<VkBuffer>& gpuBuffers,
-        utils::RingBuffer<VmaAllocation>& gpuAllocations)
-{
-    for (uint32_t i = 0; i < count; i++) {
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = sizeof(T);
-        bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
-                           VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        VmaAllocationCreateInfo allocInfo{};
-        allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
-
-        VkBuffer& buffer = gpuBuffers.Next();
-        VmaAllocation& allocation = gpuAllocations.Next();
-
-        if (vmaCreateBuffer(allocator, &bufferInfo, &allocInfo,
-                            &buffer, &allocation, nullptr) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create GPU uniform buffer");
-        }
-    }
-}
-template<typename T>
-void createStagingUniformBuffers(
-        VmaAllocator allocator,
-        uint32_t count,
-        utils::RingBuffer<VkBuffer>& stagingBuffers,
-        utils::RingBuffer<VmaAllocation>& stagingAllocations,
+        utils::RingBuffer<VmaAllocation>& gpuAllocations,
         utils::RingBuffer<void*>& mappedData)
 {
     for (uint32_t i = 0; i < count; i++) {
         VkBufferCreateInfo bufferInfo{};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bufferInfo.size = sizeof(T);
-        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
         VmaAllocationCreateInfo allocInfo{};
@@ -61,12 +34,12 @@ void createStagingUniformBuffers(
                           VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
         VmaAllocationInfo mapInfo{};
-        VkBuffer& buffer = stagingBuffers.Next();
-        VmaAllocation& allocation = stagingAllocations.Next();
+        VkBuffer& buffer = gpuBuffers.Next();
+        VmaAllocation& allocation = gpuAllocations.Next();
 
         if (vmaCreateBuffer(allocator, &bufferInfo, &allocInfo,
                             &buffer, &allocation, &mapInfo) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create staging uniform buffer");
+            throw std::runtime_error("Failed to create GPU uniform buffer");
         }
 
         void*& mapped = mappedData.Next();
@@ -104,11 +77,8 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
             //TODO: Create the buffers and store in the pipeline
             std::shared_ptr<UniformBuffer> ub = std::make_unique<UniformBuffer>();
             createGpuUniformBuffers<UnshadedOpaqueUniformBuffer>(pipeline.GetAllocator(),
-                                    MAX_FRAMES_IN_FLIGHT, ub->gpuBuffer, ub->gpuBufferAllocation);
-            createStagingUniformBuffers<UnshadedOpaqueUniformBuffer>(pipeline.GetAllocator(),
-                                                                     MAX_FRAMES_IN_FLIGHT,
-                                                                     ub->stagingBuffer,
-                                                                     ub->stagingBufferAllocation,ub->mappedData);
+                                    MAX_FRAMES_IN_FLIGHT, ub->gpuBuffer, ub->gpuBufferAllocation,
+                                    ub->mappedData);
             ub->size = sizeof(UnshadedOpaqueUniformBuffer);
             ub->id = obj->GetId();
             ub->deathCounter = 100;
@@ -138,8 +108,6 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
             for(auto i=0; i<MAX_FRAMES_IN_FLIGHT;i++){
                 auto name1 = Concatenate("UnshadedOpaqueBuffer[", i, "]");
                 debug::SetBufferName(pipeline.GetDevice(), ub->gpuBuffer[i], name1);
-                auto name2 = Concatenate("UnshadedOpaqueBuffer(staging)[", i, "]");
-                debug::SetBufferName(pipeline.GetDevice(), ub->stagingBuffer[i], name2);
                 auto name3 = Concatenate("UnshadedOpaqueDescSet[", i, "]");
                 debug::SetDescriptorSetName(pipeline.GetDevice(), ub->descriptorSets[i], name3);
             }
@@ -156,26 +124,8 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
         memcpy(data.view, glm::value_ptr(view), sizeof(float) * 16);
         memcpy(data.projection, glm::value_ptr(proj), sizeof(float) * 16);
         memcpy(data.color, glm::value_ptr(color), sizeof(float) * 4);
-        //copy to the staging buffer
+        // Write directly to host-visible GPU buffer (no staging copy needed)
         memcpy(uniformBuffer->mappedData.Current(), &data, sizeof(UnshadedOpaqueUniformBuffer));
-        //from the staging buffer to the gpuBuffer
-        VkBufferCopy copyRegion{};
-        copyRegion.srcOffset = 0;
-        copyRegion.dstOffset = 0;
-        copyRegion.size = uniformBuffer->size;
-        vkCmdCopyBuffer(cmd, uniformBuffer->stagingBuffer.Current(), uniformBuffer->gpuBuffer.Current(), 1, &copyRegion);
-        //Barrier to wait the copy - we need the fresh data.
-        VkBufferMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT;
-        barrier.buffer = uniformBuffer->gpuBuffer.Current();
-        barrier.offset = 0;
-        barrier.size = uniformBuffer->size;
-        vkCmdPipelineBarrier(cmd,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                             0, 0, nullptr, 1, &barrier, 0, nullptr);
         // Bind descriptor set, vertex/index buffers and draw
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 pipeline.GetPipelineLayout(), 0, 1,
@@ -191,7 +141,6 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
         // Advance buffers and increment the keepalive
         uniformBuffer->deathCounter++;
         uniformBuffer->gpuBuffer.Next();
-        uniformBuffer->stagingBuffer.Next();
         uniformBuffer->mappedData.Next();
         uniformBuffer->descriptorSets.Next();
     };
@@ -443,7 +392,8 @@ Pipeline::~Pipeline() {
     for (auto& [key, ub] : uniformBuffers) {
         for (uint32_t i = 0; i < ub->gpuBuffer.Size(); i++) {
             vmaDestroyBuffer(allocator, ub->gpuBuffer[i], ub->gpuBufferAllocation[i]);
-            vmaDestroyBuffer(allocator, ub->stagingBuffer[i], ub->stagingBufferAllocation[i]);
+            if(ub->stagingBuffer[i] != VK_NULL_HANDLE)
+                vmaDestroyBuffer(allocator, ub->stagingBuffer[i], ub->stagingBufferAllocation[i]);
         }
     }
     uniformBuffers.clear();
@@ -495,7 +445,8 @@ void Pipeline::DecreaseDeathCounter() {
     for(auto& dead:toDie){
         for (uint32_t i = 0; i < dead->gpuBuffer.Size(); i++) {
             vmaDestroyBuffer(allocator, dead->gpuBuffer[i], dead->gpuBufferAllocation[i]);
-            vmaDestroyBuffer(allocator, dead->stagingBuffer[i], dead->stagingBufferAllocation[i]);
+            if(dead->stagingBuffer[i] != VK_NULL_HANDLE)
+                vmaDestroyBuffer(allocator, dead->stagingBuffer[i], dead->stagingBufferAllocation[i]);
         }
         // Free descriptor sets back to the pool
         std::vector<VkDescriptorSet> sets(dead->descriptorSets.Size());
