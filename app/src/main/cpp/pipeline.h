@@ -128,6 +128,7 @@ namespace graphics {
         VkPipeline GetPipeline() const { return pipeline; }
         VkDevice GetDevice() const {return device;}
         VmaAllocator GetAllocator()const {return allocator;}
+        VkPipelineLayout GetPipelineLayout()const {return pipelineLayout;}
         VkDescriptorSet AllocateDescriptorSet();
         std::shared_ptr<UniformBuffer> GetUniformBuffer(uint64_t id) {
             if(uniformBuffers.count(id) == 0)

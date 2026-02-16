@@ -6,6 +6,7 @@
 #include <cassert>
 #include <array>
 #include "renderable.h"
+#include "static_mesh.h"
 #include "rdo.h"
 #include "concatenate.h"
 #include "vk_debug.h"
@@ -175,9 +176,19 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
                              VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                              0, 0, nullptr, 1, &barrier, 0, nullptr);
-        // TODO: Draw
+        // Bind descriptor set, vertex/index buffers and draw
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipeline.GetPipelineLayout(), 0, 1,
+                                &uniformBuffer->descriptorSets.Current(), 0, nullptr);
+        StaticMesh* mesh = obj->GetMesh();
+        assert(mesh != nullptr);
+        VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(cmd, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, mesh->GetIndexCount(), 1, 0, 0, 0);
 
-        // TODO: Advance buffers and increment the keepalive
+        // Advance buffers and increment the keepalive
         uniformBuffer->deathCounter++;
         uniformBuffer->gpuBuffer.Next();
         uniformBuffer->stagingBuffer.Next();
