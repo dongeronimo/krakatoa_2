@@ -20,6 +20,7 @@
 #include "rdo.h"
 #include "renderable.h"
 #include "transform.h"
+#include "frame_timer.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::Pipeline> gUnshadedOpaquePipeline = nullptr;
@@ -28,6 +29,7 @@ std::unordered_map<std::string, VkDescriptorSetLayout> descriptorSetLayouts;
 std::unique_ptr<graphics::CommandPoolManager> gCommandPoolManager = nullptr;
 std::unique_ptr<graphics::FrameSync> gFrameSync = nullptr;
 std::unordered_map<std::string, std::unique_ptr<graphics::StaticMesh>> gStaticMeshes;
+std::unique_ptr<graphics::FrameTimer> gFrameTimer = nullptr;
 
 graphics::Renderable cube("cube");
 extern "C" JNIEXPORT jstring JNICALL
@@ -96,6 +98,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
         }
     }
     cube.SetMesh(gStaticMeshes["cube"].get());
+    gFrameTimer = std::make_unique<graphics::FrameTimer>();
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -131,6 +134,7 @@ extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(JNIEnv *env,
                                                                                jobject thiz) {
+    gFrameTimer->Tick();
     gFrameSync->AdvanceFrame();
     gCommandPoolManager->AdvanceFrame();
 
@@ -159,7 +163,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     glm::mat4 proj = glm::perspective(glm::radians(45.0f),
                                       gSwapChainRenderPass->GetExtent().width/(float)gSwapChainRenderPass->GetExtent().height,
                                       0.1f, 100.0f);
-    cube.GetTransform().Rotate(glm::vec3(0,1,0));
+    float dt = gFrameTimer->GetDeltaTime();
+    cube.GetTransform().Rotate(glm::vec3(0, 45.0f * dt, 0));
     // TODO: Fill RDO
     graphics::RDO rdo;
     rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
@@ -221,19 +226,24 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     gUnshadedOpaquePipeline = nullptr;
     gCommandPoolManager = nullptr;
     gFrameSync = nullptr;
+    gFrameTimer = nullptr;
     gVkContext = nullptr;
 }
 extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnResume(JNIEnv *env,
                                                                             jobject thiz) {
-    // TODO: implement nativeOnResume()
+    if (gFrameTimer) {
+        gFrameTimer->Resume();
+    }
 }
 extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnPause(JNIEnv *env,
                                                                            jobject thiz) {
-    // TODO: implement nativeOnPause()
+    if (gFrameTimer) {
+        gFrameTimer->Pause();
+    }
 }
 extern "C"
 JNIEXPORT void JNICALL
