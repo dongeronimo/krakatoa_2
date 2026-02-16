@@ -165,6 +165,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     rdo.Add(graphics::RDO::Keys::VIEW_MAT, view);
     rdo.Add(graphics::RDO::Keys::PROJ_MAT, proj);
     // TODO: Draw the renderable with it's rdo
+    gUnshadedOpaquePipeline->Bind(cmd);
     gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube, frameIndex);
     ////////////////////////////////////////////////////////////////////////////////////////////////
     gSwapChainRenderPass->End(cmd);

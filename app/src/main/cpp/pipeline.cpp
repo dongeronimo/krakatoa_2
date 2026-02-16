@@ -116,6 +116,7 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
                 auto name2 = Concatenate("UnshadedOpaqueBuffer(staging)[", i, "]");
                 debug::SetBufferName(pipeline.GetDevice(), ub->stagingBuffer[i], name2);
             }
+            uniformBuffer = ub;
         }
         // TODO: Fill it with new data
         // 1) fill the uniform buffer
