@@ -424,6 +424,7 @@ Pipeline::Pipeline(RenderPass* renderPass,
     assert(!config.descriptorPoolSizes.empty());
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     poolInfo.maxSets = MAX_DESCRIPTOR_SETS_PER_POOL;
     poolInfo.poolSizeCount = static_cast<uint32_t>(config.descriptorPoolSizes.size());
     poolInfo.pPoolSizes = config.descriptorPoolSizes.data();
@@ -438,7 +439,15 @@ Pipeline::Pipeline(RenderPass* renderPass,
 }
 
 Pipeline::~Pipeline() {
-    //TODO: Destroy the uniform buffers
+    // Destroy all remaining uniform buffers
+    for (auto& [key, ub] : uniformBuffers) {
+        for (uint32_t i = 0; i < ub->gpuBuffer.Size(); i++) {
+            vmaDestroyBuffer(allocator, ub->gpuBuffer[i], ub->gpuBufferAllocation[i]);
+            vmaDestroyBuffer(allocator, ub->stagingBuffer[i], ub->stagingBufferAllocation[i]);
+        }
+    }
+    uniformBuffers.clear();
+    // Destroying the pool implicitly frees all descriptor sets
     if (descriptorPool != VK_NULL_HANDLE) {
         vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     }
@@ -488,6 +497,13 @@ void Pipeline::DecreaseDeathCounter() {
             vmaDestroyBuffer(allocator, dead->gpuBuffer[i], dead->gpuBufferAllocation[i]);
             vmaDestroyBuffer(allocator, dead->stagingBuffer[i], dead->stagingBufferAllocation[i]);
         }
+        // Free descriptor sets back to the pool
+        std::vector<VkDescriptorSet> sets(dead->descriptorSets.Size());
+        for (uint32_t i = 0; i < dead->descriptorSets.Size(); i++) {
+            sets[i] = dead->descriptorSets[i];
+        }
+        vkFreeDescriptorSets(device, descriptorPool,
+                             static_cast<uint32_t>(sets.size()), sets.data());
         uniformBuffers.erase(dead->id);
     }
 }
