@@ -41,7 +41,15 @@ namespace graphics {
         VkExtent2D getSwapchainExtent() const { return swapchainExtent; }
         const std::vector<VkImageView>& getSwapchainImageViews() const { return swapchainImageViews; }
         uint32_t getSwapchainImageCount() const { return static_cast<uint32_t>(swapchainImages.size()); }
-
+        /**
+         * The frame index, we need it for the many ring buffers in the app.
+         * It assumes you are calling Advance at the end of each frame.
+         * */
+        uint32_t GetFrameIndex()const {return frameIndex % MAX_FRAMES_IN_FLIGHT;}
+        /**
+         * Advance the frame index.
+         * */
+        void Advance();
     private:
         VkInstance instance = VK_NULL_HANDLE;
         VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
@@ -86,6 +94,8 @@ namespace graphics {
                                 uint32_t width, uint32_t height);
         void createSwapchainImageViews();
         void destroySwapchain();
+
+        uint32_t frameIndex = 0;
     };
 }
 #endif //KRAKATOA_VK_CONTEXT_H

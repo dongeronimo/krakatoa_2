@@ -812,3 +812,7 @@ void VkContext::destroySwapchain() {
         swapchain = VK_NULL_HANDLE;
     }
 }
+
+void VkContext::Advance() {
+    frameIndex++;
+}

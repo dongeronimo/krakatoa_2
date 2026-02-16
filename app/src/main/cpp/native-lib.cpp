@@ -146,6 +146,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
 
     gCommandPoolManager->BeginFrame();
     VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
+    const uint32_t frameIndex = gVkContext->GetFrameIndex();
     gSwapChainRenderPass->setClearColor(1.0f, 0.0f, 0.0f, 0.0f);
     gSwapChainRenderPass->Begin(cmd,
                                 gSwapChainRenderPass->GetFramebuffer(imageIndex),
@@ -164,7 +165,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     rdo.Add(graphics::RDO::Keys::VIEW_MAT, view);
     rdo.Add(graphics::RDO::Keys::PROJ_MAT, proj);
     // TODO: Draw the renderable with it's rdo
-    gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube);
+    gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube, frameIndex);
     ////////////////////////////////////////////////////////////////////////////////////////////////
     gSwapChainRenderPass->End(cmd);
     gCommandPoolManager->EndFrame();
@@ -198,7 +199,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     presentInfo.pImageIndices = &imageIndex;
 
     vkQueuePresentKHR(gVkContext->getPresentQueue(), &presentInfo);
-    
+    gVkContext->Advance();
 }
 extern "C"
 JNIEXPORT void JNICALL

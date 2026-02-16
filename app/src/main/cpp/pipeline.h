@@ -53,7 +53,8 @@ namespace graphics {
         VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         bool primitiveRestartEnable = false;
         // --- Actual drawing, varies between the pipelines bc each pipeline uses different fields and send different data to the shaders
-        std::function<void(VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline)> renderCallback;
+        std::function<void(VkCommandBuffer cmd,
+                RDO* rdo, Renderable* obj, Pipeline& pipeline, uint32_t frameIndex)> renderCallback;
     };
     /**
      * The uniform buffer for an object in a pipeline.
@@ -119,7 +120,8 @@ namespace graphics {
         /**
          * Draw the object using the callback defined in PipelineConfig
          * */
-        void Draw(VkCommandBuffer cmd, RDO* rdo, Renderable* renderable);
+        void Draw(VkCommandBuffer cmd, RDO* rdo, Renderable* renderable,
+                  uint32_t frameIndex);
         VkPipeline GetPipeline() const { return pipeline; }
         VkDevice GetDevice() const {return device;}
         VmaAllocator GetAllocator()const {return allocator;}
@@ -136,7 +138,7 @@ namespace graphics {
         VkPipeline pipeline = VK_NULL_HANDLE;
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
-        std::function<void(VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline)> renderCallback;
+        std::function<void(VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline, uint32_t frameIndex)> renderCallback;
         VkShaderModule CreateShaderModule(const std::vector<uint8_t>& data);
         std::unordered_map<uint64_t, std::shared_ptr<UniformBuffer>> uniformBuffers;
         void DecreaseDeathCounter();

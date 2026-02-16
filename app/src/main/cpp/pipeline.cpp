@@ -9,6 +9,7 @@
 #include "rdo.h"
 #include "concatenate.h"
 #include "vk_debug.h"
+#include <glm/gtc/type_ptr.hpp>
 using namespace graphics;
 
 template<typename T>
@@ -92,7 +93,7 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
     /**
      * Expects MODEL, VIEW, PROJECTION, COLOR
      * */
-    config.renderCallback = [](VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline){
+    config.renderCallback = [](VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline, uint32_t frameIndex){
         // TODO: Get the descriptor set for this object
         std::shared_ptr<UniformBuffer> uniformBuffer  = pipeline.GetUniformBuffer(obj->GetId());
         if(uniformBuffer == nullptr){
@@ -117,8 +118,43 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
             }
         }
         // TODO: Fill it with new data
-
+        // 1) fill the uniform buffer
+        glm::mat4 model = rdo->GetMat4(RDO::MODEL_MAT);
+        glm::mat4 view = rdo->GetMat4(RDO::VIEW_MAT);
+        glm::mat4 proj = rdo->GetMat4(RDO::PROJ_MAT);
+        glm::vec4 color = rdo->GetVec4(RDO::COLOR);
+        UnshadedOpaqueUniformBuffer data{};
+        memcpy(data.model, glm::value_ptr(model), sizeof(float) * 16);
+        memcpy(data.view, glm::value_ptr(view), sizeof(float) * 16);
+        memcpy(data.projection, glm::value_ptr(proj), sizeof(float) * 16);
+        memcpy(data.color, glm::value_ptr(color), sizeof(float) * 4);
+        //copy to the staging buffer
+        memcpy(uniformBuffer->mappedData.Current(), &data, sizeof(UnshadedOpaqueUniformBuffer));
+        //from the staging buffer to the gpuBuffer
+        VkBufferCopy copyRegion{};
+        copyRegion.srcOffset = 0;
+        copyRegion.dstOffset = 0;
+        copyRegion.size = uniformBuffer->size;
+        vkCmdCopyBuffer(cmd, uniformBuffer->stagingBuffer.Current(), uniformBuffer->gpuBuffer.Current(), 1, &copyRegion);
+        //Barrier to wait the copy - we need the fresh data.
+        VkBufferMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT;
+        barrier.buffer = uniformBuffer->gpuBuffer.Current();
+        barrier.offset = 0;
+        barrier.size = uniformBuffer->size;
+        vkCmdPipelineBarrier(cmd,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             0, 0, nullptr, 1, &barrier, 0, nullptr);
         // TODO: Draw
+
+        // TODO: Advance buffers and increment the keepalive
+        uniformBuffer->deathCounter++;
+        uniformBuffer->gpuBuffer.Next();
+        uniformBuffer->stagingBuffer.Next();
+        uniformBuffer->mappedData.Next();
     };
     return config;
 }
@@ -137,7 +173,7 @@ PipelineConfig graphics::TranslucentConfig() {
     config.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
     config.alphaBlendOp = VK_BLEND_OP_ADD;
     config.cullMode = VK_CULL_MODE_NONE;
-    config.renderCallback = [](VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline ){
+    config.renderCallback = [](VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline, uint32_t frameIndex){
 
     };
     return config;
@@ -153,7 +189,7 @@ PipelineConfig graphics::WireframeConfig() {
     config.blendEnable = false;
     config.cullMode = VK_CULL_MODE_NONE;
     config.lineWidth = 1.0f;
-    config.renderCallback = [](VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline){
+    config.renderCallback = [](VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline, uint32_t frameIndex){
 
     };
     return config;
@@ -356,8 +392,8 @@ void Pipeline::Bind(VkCommandBuffer cmd) const {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 }
 
-void Pipeline::Draw(VkCommandBuffer cmd, RDO *rdo, Renderable *renderable) {
-    renderCallback(cmd, rdo, renderable, *this);
+void Pipeline::Draw(VkCommandBuffer cmd, RDO *rdo, Renderable *renderable, uint32_t frameIndex) {
+    renderCallback(cmd, rdo, renderable, *this, frameIndex);
 }
 
 void Pipeline::AddUniformBuffer(uint64_t id, std::shared_ptr<UniformBuffer> b) {
