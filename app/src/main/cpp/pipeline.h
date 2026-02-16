@@ -74,6 +74,7 @@ namespace graphics {
         utils::RingBuffer<VmaAllocation> gpuBufferAllocation;
         utils::RingBuffer<VmaAllocation> stagingBufferAllocation;
         utils::RingBuffer<void*> mappedData;
+        utils::RingBuffer<VkDescriptorSet> descriptorSets;
         size_t size;
         uint64_t id;
         uint32_t deathCounter;

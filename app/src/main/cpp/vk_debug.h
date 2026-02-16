@@ -23,6 +23,7 @@ namespace debug {
     void SetFramebufferName(VkDevice device, VkFramebuffer object, const std::string& name);
     void SetPipelineName(VkDevice device, VkPipeline object, const std::string& name);
     void SetDescriptorPoolName(VkDevice device, VkDescriptorPool object, const std::string& name);
+    void SetDescriptorSetName(VkDevice device, VkDescriptorSet object, const std::string& name);
 
     /// Begin a debug label region on a command buffer (visible in RenderDoc).
     void BeginLabel(VkCommandBuffer cmd, const std::string& name,

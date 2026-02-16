@@ -111,6 +111,11 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
             ub->size = sizeof(UnshadedOpaqueUniformBuffer);
             ub->id = obj->GetId();
             ub->deathCounter = 100;
+            //Allocate one descriptor set per frame
+            for(auto i=0; i<MAX_FRAMES_IN_FLIGHT;i++){
+                VkDescriptorSet& ds = ub->descriptorSets.Next();
+                ds = pipeline.AllocateDescriptorSet();
+            }
             pipeline.AddUniformBuffer(obj->GetId(), ub);
             //Give a name to the relevant objects.
             for(auto i=0; i<MAX_FRAMES_IN_FLIGHT;i++){
@@ -118,6 +123,8 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
                 debug::SetBufferName(pipeline.GetDevice(), ub->gpuBuffer[i], name1);
                 auto name2 = Concatenate("UnshadedOpaqueBuffer(staging)[", i, "]");
                 debug::SetBufferName(pipeline.GetDevice(), ub->stagingBuffer[i], name2);
+                auto name3 = Concatenate("UnshadedOpaqueDescSet[", i, "]");
+                debug::SetDescriptorSetName(pipeline.GetDevice(), ub->descriptorSets[i], name3);
             }
             uniformBuffer = ub;
         }
@@ -159,6 +166,7 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
         uniformBuffer->gpuBuffer.Next();
         uniformBuffer->stagingBuffer.Next();
         uniformBuffer->mappedData.Next();
+        uniformBuffer->descriptorSets.Next();
     };
     return config;
 }

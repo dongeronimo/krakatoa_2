@@ -87,6 +87,11 @@ void SetDescriptorPoolName(VkDevice device, VkDescriptorPool object, const std::
                   VK_OBJECT_TYPE_DESCRIPTOR_POOL, name);
 }
 
+void SetDescriptorSetName(VkDevice device, VkDescriptorSet object, const std::string& name) {
+    SetObjectName(device, reinterpret_cast<uint64_t>(object),
+                  VK_OBJECT_TYPE_DESCRIPTOR_SET, name);
+}
+
 void BeginLabel(VkCommandBuffer cmd, const std::string& name,
                 float r, float g, float b, float a) {
     if (!pfnCmdBeginDebugUtilsLabel) return;
