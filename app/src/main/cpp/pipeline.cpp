@@ -454,6 +454,7 @@ void Pipeline::Bind(VkCommandBuffer cmd) const {
 
 void Pipeline::Draw(VkCommandBuffer cmd, RDO *rdo, Renderable *renderable, uint32_t frameIndex) {
     renderCallback(cmd, rdo, renderable, *this, frameIndex);
+    DecreaseDeathCounter();
 }
 
 VkDescriptorSet Pipeline::AllocateDescriptorSet() {
