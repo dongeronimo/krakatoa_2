@@ -111,10 +111,26 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
             ub->size = sizeof(UnshadedOpaqueUniformBuffer);
             ub->id = obj->GetId();
             ub->deathCounter = 100;
-            //Allocate one descriptor set per frame
+            //Allocate one descriptor set per frame and bind it to its gpu buffer
             for(auto i=0; i<MAX_FRAMES_IN_FLIGHT;i++){
                 VkDescriptorSet& ds = ub->descriptorSets.Next();
                 ds = pipeline.AllocateDescriptorSet();
+
+                VkDescriptorBufferInfo bufferInfo{};
+                bufferInfo.buffer = ub->gpuBuffer[i];
+                bufferInfo.offset = 0;
+                bufferInfo.range = sizeof(UnshadedOpaqueUniformBuffer);
+
+                VkWriteDescriptorSet write{};
+                write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet = ds;
+                write.dstBinding = 0;
+                write.dstArrayElement = 0;
+                write.descriptorCount = 1;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                write.pBufferInfo = &bufferInfo;
+
+                vkUpdateDescriptorSets(pipeline.GetDevice(), 1, &write, 0, nullptr);
             }
             pipeline.AddUniformBuffer(obj->GetId(), ub);
             //Give a name to the relevant objects.
