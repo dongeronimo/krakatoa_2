@@ -126,6 +126,10 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
         memcpy(data.color, glm::value_ptr(color), sizeof(float) * 4);
         // Write directly to host-visible GPU buffer (no staging copy needed)
         memcpy(uniformBuffer->mappedData.Current(), &data, sizeof(UnshadedOpaqueUniformBuffer));
+        // Flush for non-coherent memory (no-op if HOST_COHERENT)
+        vmaFlushAllocation(pipeline.GetAllocator(),
+                           uniformBuffer->gpuBufferAllocation.Current(),
+                           0, sizeof(UnshadedOpaqueUniformBuffer));
         // Bind descriptor set, vertex/index buffers and draw
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 pipeline.GetPipelineLayout(), 0, 1,
