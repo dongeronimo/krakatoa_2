@@ -95,6 +95,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                     "cube");
         }
     }
+    cube.SetMesh(gStaticMeshes["cube"].get());
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -158,6 +159,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     glm::mat4 proj = glm::perspective(glm::radians(45.0f),
                                       gSwapChainRenderPass->GetExtent().width/(float)gSwapChainRenderPass->GetExtent().height,
                                       0.1f, 100.0f);
+    cube.GetTransform().Rotate(glm::vec3(0,1,0));
     // TODO: Fill RDO
     graphics::RDO rdo;
     rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
