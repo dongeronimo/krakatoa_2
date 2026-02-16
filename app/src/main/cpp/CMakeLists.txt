@@ -146,6 +146,7 @@ target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
 )
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         MAX_FRAMES_IN_FLIGHT=3
+        MAX_DESCRIPTOR_SETS_PER_POOL=1024
         GLM_FORCE_DEPTH_ZERO_TO_ONE
 )
 # Strip symbols in Release

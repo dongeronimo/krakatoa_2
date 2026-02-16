@@ -52,6 +52,8 @@ namespace graphics {
         // --- Input assembly ---
         VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         bool primitiveRestartEnable = false;
+        // --- Descriptor pool sizes (config-driven, each pipeline declares what it needs) ---
+        std::vector<VkDescriptorPoolSize> descriptorPoolSizes;
         // --- Actual drawing, varies between the pipelines bc each pipeline uses different fields and send different data to the shaders
         std::function<void(VkCommandBuffer cmd,
                 RDO* rdo, Renderable* obj, Pipeline& pipeline, uint32_t frameIndex)> renderCallback;
@@ -72,6 +74,7 @@ namespace graphics {
         utils::RingBuffer<VmaAllocation> gpuBufferAllocation;
         utils::RingBuffer<VmaAllocation> stagingBufferAllocation;
         utils::RingBuffer<void*> mappedData;
+        utils::RingBuffer<VkDescriptorSet> descriptorSets;
         size_t size;
         uint64_t id;
         uint32_t deathCounter;
@@ -125,6 +128,8 @@ namespace graphics {
         VkPipeline GetPipeline() const { return pipeline; }
         VkDevice GetDevice() const {return device;}
         VmaAllocator GetAllocator()const {return allocator;}
+        VkPipelineLayout GetPipelineLayout()const {return pipelineLayout;}
+        VkDescriptorSet AllocateDescriptorSet();
         std::shared_ptr<UniformBuffer> GetUniformBuffer(uint64_t id) {
             if(uniformBuffers.count(id) == 0)
                 return nullptr;
@@ -138,6 +143,7 @@ namespace graphics {
         VkPipeline pipeline = VK_NULL_HANDLE;
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
+        VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
         std::function<void(VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline, uint32_t frameIndex)> renderCallback;
         VkShaderModule CreateShaderModule(const std::vector<uint8_t>& data);
         std::unordered_map<uint64_t, std::shared_ptr<UniformBuffer>> uniformBuffers;
