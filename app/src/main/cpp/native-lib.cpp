@@ -23,8 +23,10 @@
 #include "frame_timer.h"
 #include "ar_manager.h"
 #include "egl_dummy_context.h"
+#include "offscreen_render_pass.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
+std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
 std::unique_ptr<graphics::Pipeline> gUnshadedOpaquePipeline = nullptr;
 std::unordered_map<std::string, VkPipelineLayout> pipelineLayouts;
 std::unordered_map<std::string, VkDescriptorSetLayout> descriptorSetLayouts;
@@ -69,6 +71,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     gSwapChainRenderPass = std::make_unique<graphics::SwapchainRenderPass>(gVkContext->GetDevice(),
                                                                            gVkContext->GetAllocator(),
                                                                            gVkContext->GetSwapchainFormat());
+    gOffscreenRenderPass = std::make_unique<graphics::OffscreenRenderPass>(gVkContext->GetDevice(),
+                                                                           gVkContext->GetAllocator(),
+                                                                           100, 100);
     auto unshadedOpaqueDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
             .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
             .Build();
@@ -130,7 +135,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
         gVkContext->RecreateSwapchain(width, height);
     gSwapChainRenderPass->Recreate(gVkContext->getSwapchainImageViews(),
                                   gVkContext->getSwapchainExtent());
-    gUnshadedOpaquePipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
+    gOffscreenRenderPass->Resize(gVkContext->getSwapchainExtent().width,
+                                 gVkContext->getSwapchainExtent().height);
+    gUnshadedOpaquePipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
                                                                    gVkContext->GetDevice(),
                                                                    gVkContext->GetAllocator(),
                                                                    graphics::UnshadedOpaqueConfig(),
@@ -172,12 +179,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gCommandPoolManager->BeginFrame();
     VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
     const uint32_t frameIndex = gVkContext->GetFrameIndex();
-    gSwapChainRenderPass->setClearColor(1.0f, 0.0f, 0.0f, 0.0f);
-    gSwapChainRenderPass->Begin(cmd,
-                                gSwapChainRenderPass->GetFramebuffer(imageIndex),
-                                gVkContext->getSwapchainExtent());
-    ////////////////////////////////////////////////////////////////////////////////////////////////
-    // TODO: Set camera
+    ////////////////////// Update objects data /////////////////////////////////////////////////////
+    //Set camera
     glm::vec3 cameraPos = {3.0f, 5.0f, 7.0f};
     glm::mat4 view = glm::lookAt(cameraPos, glm::vec3(0,0,0), glm::vec3(0,1,0));
     glm::mat4 proj = glm::perspective(glm::radians(45.0f),
@@ -185,16 +188,28 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                                       0.1f, 100.0f);
     float dt = gFrameTimer->GetDeltaTime();
     cube.GetTransform().Rotate(glm::vec3(0, 45.0f * dt, 0));
-    // TODO: Fill RDO
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+
+    //begin the offscreen render pass
+    gOffscreenRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    gOffscreenRenderPass->AdvanceFrame();
+    gOffscreenRenderPass->Begin(cmd, gOffscreenRenderPass->GetFramebuffer(), gOffscreenRenderPass->GetExtent());
+    // Fill RDO for the cube
     graphics::RDO rdo;
     rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
     rdo.Add(graphics::RDO::Keys::MODEL_MAT, cube.GetTransform().GetWorldMatrix());
     rdo.Add(graphics::RDO::Keys::VIEW_MAT, view);
     rdo.Add(graphics::RDO::Keys::PROJ_MAT, proj);
-    // TODO: Draw the renderable with it's rdo
+    // Draw the cube using the unshaded pipeline.
     gUnshadedOpaquePipeline->Bind(cmd);
     gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube, frameIndex);
-    ////////////////////////////////////////////////////////////////////////////////////////////////
+    gOffscreenRenderPass->End(cmd);
+    //begin the swap chain render pass
+    gSwapChainRenderPass->setClearColor(1.0f, 0.0f, 0.0f, 0.0f);
+    gSwapChainRenderPass->Begin(cmd,
+                                gSwapChainRenderPass->GetFramebuffer(imageIndex),
+                                gVkContext->getSwapchainExtent());
+
     gSwapChainRenderPass->End(cmd);
     gCommandPoolManager->EndFrame();
 
