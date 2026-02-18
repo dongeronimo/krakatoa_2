@@ -21,6 +21,7 @@
 #include "renderable.h"
 #include "transform.h"
 #include "frame_timer.h"
+#include "ar_manager.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::Pipeline> gUnshadedOpaquePipeline = nullptr;
@@ -30,7 +31,7 @@ std::unique_ptr<graphics::CommandPoolManager> gCommandPoolManager = nullptr;
 std::unique_ptr<graphics::FrameSync> gFrameSync = nullptr;
 std::unordered_map<std::string, std::unique_ptr<graphics::StaticMesh>> gStaticMeshes;
 std::unique_ptr<graphics::FrameTimer> gFrameTimer = nullptr;
-
+std::unique_ptr<ar::ARSessionManager> gArSessionManager = nullptr;
 graphics::Renderable cube("cube");
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
@@ -44,7 +45,8 @@ JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCreated(JNIEnv *env,
                                                                                     jobject thiz,
                                                                                     jobject surface,
-                                                                                    jobject asset_manager) {
+                                                                                    jobject asset_manager,
+                                                                                    jobject activity) {
     bool loadedArcore = ar::LoadARCore();
 
     AAssetManager* nativeAssetManager = AAssetManager_fromJava(env, asset_manager);
@@ -99,6 +101,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     }
     cube.SetMesh(gStaticMeshes["cube"].get());
     gFrameTimer = std::make_unique<graphics::FrameTimer>();
+    gArSessionManager = std::make_unique<ar::ARSessionManager>();
+    gArSessionManager->initialize(env, activity, activity);
+    gArSessionManager->onResume();
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -108,6 +113,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                                                     jint height,
                                                                                     jint rotation) {
     vkDeviceWaitIdle(gVkContext->GetDevice());
+    gArSessionManager->onSurfaceChanged(rotation, width, height);
     // Create the resources that rely on screen size
     if (gVkContext->GetSwapchain() == VK_NULL_HANDLE)
         gVkContext->CreateSwapchain(width, height);
@@ -137,7 +143,10 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gFrameTimer->Tick();
     gFrameSync->AdvanceFrame();
     gCommandPoolManager->AdvanceFrame();
-
+    // Update ARCore first - this updates the camera texture
+    if (gArSessionManager) {
+        gArSessionManager->onDrawFrame();
+    }
     gFrameSync->WaitForCurrentFrame();
 
     VkSemaphore acquireSem = gFrameSync->GetNextAcquireSemaphore();
@@ -214,6 +223,7 @@ JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEnv *env,
                                                                            jobject thiz) {
     vkDeviceWaitIdle(gVkContext->GetDevice());
+    gArSessionManager.release();
     gStaticMeshes.clear();
     for (const auto& [key, value] : descriptorSetLayouts) {
         vkDestroyDescriptorSetLayout(gVkContext->GetDevice(), value, nullptr);
@@ -236,6 +246,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnResume(JNIE
     if (gFrameTimer) {
         gFrameTimer->Resume();
     }
+    if(gArSessionManager)
+        gArSessionManager->onResume();
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -244,6 +256,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnPause(JNIEn
     if (gFrameTimer) {
         gFrameTimer->Pause();
     }
+    gArSessionManager->onPause();
 }
 extern "C"
 JNIEXPORT void JNICALL

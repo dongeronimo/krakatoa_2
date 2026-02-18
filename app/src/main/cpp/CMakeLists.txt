@@ -106,6 +106,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         transform.cpp
         frame_timer.h
         frame_timer.cpp
+        ar_manager.cpp
+        ar_manager.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore

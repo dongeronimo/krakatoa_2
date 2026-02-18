@@ -9,7 +9,7 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 
-class VulkanSurfaceView(context: Context,var assetManager: AssetManager):
+class VulkanSurfaceView(context: Context,var assetManager: AssetManager,var activity: Activity):
     SurfaceView(context), SurfaceHolder.Callback{
 
     /**
@@ -32,7 +32,7 @@ class VulkanSurfaceView(context: Context,var assetManager: AssetManager):
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
-        nativeOnSurfaceCreated(holder.surface, assetManager)
+        nativeOnSurfaceCreated(holder.surface, assetManager, activity)
         renderThread = RenderThread()
         surfaceReady = true
         (context as? MainActivity)?.let {
@@ -110,7 +110,7 @@ class VulkanSurfaceView(context: Context,var assetManager: AssetManager):
         return super.onTouchEvent(event)
     }
 
-    private external fun nativeOnSurfaceCreated(surface: Surface, assetManager: AssetManager)
+    private external fun nativeOnSurfaceCreated(surface: Surface, assetManager: AssetManager, activity: Activity)
     private external fun nativeOnSurfaceChanged(width: Int, height: Int, rotation: Int)
     private external fun nativeOnSurfaceDestroyed()
     private external fun nativeOnDrawFrame()

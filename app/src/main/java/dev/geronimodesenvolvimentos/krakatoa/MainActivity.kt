@@ -22,7 +22,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        vulkanSurfaceView = VulkanSurfaceView(this, assets)
+        vulkanSurfaceView = VulkanSurfaceView(this, assets, this)
         setContentView(vulkanSurfaceView)
         // Request camera permission if not already granted
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
