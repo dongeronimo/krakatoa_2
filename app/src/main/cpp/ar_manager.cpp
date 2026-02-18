@@ -2,7 +2,7 @@
 #include "ar_manager.h"
 #include "android_log.h"
 #include <cassert>
-
+#include <GLES3/gl3.h>
 namespace ar {
 
     bool ARSessionManager::initialize(JNIEnv* env, jobject context, jobject activity) {
@@ -25,7 +25,11 @@ namespace ar {
             LOGE("Failed to create ARCore session: %d", status);
             return false;
         }
-
+        // Dummy GL texture — ARCore exige uma, mas nunca a usamos.
+        // A imagem real vem via ArFrame_acquireCameraImage (CPU path).
+        GLuint dummyTexture = 0;
+        glGenTextures(1, &dummyTexture);
+        m_loader.ArSession_setCameraTextureName(m_session, dummyTexture);
         LOGI("ARSessionManager::initialize - creating config...");
         m_loader.ArConfig_create(m_session, &m_config);
 

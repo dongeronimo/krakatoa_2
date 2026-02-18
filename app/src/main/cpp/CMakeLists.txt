@@ -108,6 +108,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         frame_timer.cpp
         ar_manager.cpp
         ar_manager.h
+        egl_dummy_context.cpp
+        egl_dummy_context.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
@@ -127,6 +129,8 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         nlohmann_json::nlohmann_json
         assimp::assimp
         glm::glm
+        EGL
+        GLESv3
 )
 
 # Compile definitions

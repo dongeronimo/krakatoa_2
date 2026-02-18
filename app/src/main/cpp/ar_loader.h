@@ -110,6 +110,8 @@ namespace ar {
             LOAD_ARCORE_FUNC(ArPlane_getPolygon);
             LOAD_ARCORE_FUNC(ArPlane_getCenterPose);
 
+            LOAD_ARCORE_FUNC(ArSession_setCameraTextureName);
+
 #undef LOAD_ARCORE_FUNC
 
             LOGI("ARCore library loaded successfully");
@@ -209,6 +211,7 @@ namespace ar {
         void (*ArPlane_getCenterPose)(const ArSession* session, const ArPlane* plane,
                                       ArPose* out_pose) = nullptr;
 
+        void (*ArSession_setCameraTextureName)(ArSession* session, uint32_t texture_id) = nullptr;
     private:
         ARCoreLoader() = default;
         void* handle_ = nullptr;

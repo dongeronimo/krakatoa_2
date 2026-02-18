@@ -22,6 +22,7 @@
 #include "transform.h"
 #include "frame_timer.h"
 #include "ar_manager.h"
+#include "egl_dummy_context.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::Pipeline> gUnshadedOpaquePipeline = nullptr;
@@ -32,6 +33,8 @@ std::unique_ptr<graphics::FrameSync> gFrameSync = nullptr;
 std::unordered_map<std::string, std::unique_ptr<graphics::StaticMesh>> gStaticMeshes;
 std::unique_ptr<graphics::FrameTimer> gFrameTimer = nullptr;
 std::unique_ptr<ar::ARSessionManager> gArSessionManager = nullptr;
+//dummy egl context do deal with arcore bullshit. use it before getting each ar frame.
+ar::EglDummyContext m_eglDummy;
 graphics::Renderable cube("cube");
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
@@ -99,8 +102,14 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                     "cube");
         }
     }
+    //load the meshes
     cube.SetMesh(gStaticMeshes["cube"].get());
+    //create the frame timer
     gFrameTimer = std::make_unique<graphics::FrameTimer>();
+    //dummy egl context to deal with ar session bullshit
+
+    m_eglDummy.initialize();
+    //the ar session manager
     gArSessionManager = std::make_unique<ar::ARSessionManager>();
     gArSessionManager->initialize(env, activity, activity);
     gArSessionManager->onResume();
@@ -144,6 +153,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gFrameSync->AdvanceFrame();
     gCommandPoolManager->AdvanceFrame();
     // Update ARCore first - this updates the camera texture
+    m_eglDummy.makeCurrent();
+    gArSessionManager->onDrawFrame();
     if (gArSessionManager) {
         gArSessionManager->onDrawFrame();
     }
