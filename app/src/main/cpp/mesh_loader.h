@@ -37,6 +37,15 @@ namespace io {
          *         Empty vectors if loading failed.
          */
         MeshData Load(const std::string& assetPath);
+
+        /**
+         * Generate a fullscreen quad (two triangles) in NDC.
+         * Positions cover [-1, 1] in XY, Z = 0.
+         * UVs go from (0,0) top-left to (1,1) bottom-right
+         * (Vulkan convention: Y-down in UV space).
+         * Normals point towards the camera (0, 0, -1).
+         */
+        static MeshData CreateFullscreenQuad();
     };
 }
 #endif //KRAKATOA_MESH_LOADER_H

@@ -51,6 +51,8 @@ namespace graphics {
 
         VkImage       GetCurrentImage()     const;
         VkImageView   GetCurrentImageView() const;
+        /// Access a specific ring-buffer slot's image view (for descriptor set writing).
+        VkImageView   GetImageView(uint32_t index) const;
         uint32_t      GetWidth()            const { return width; }
         uint32_t      GetHeight()           const { return height; }
         bool          IsValid()             const { return valid; }

@@ -29,6 +29,7 @@ std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
 std::unique_ptr<graphics::Pipeline> gUnshadedOpaquePipeline = nullptr;
+std::unique_ptr<graphics::Pipeline> gCameraBgPipeline = nullptr;
 std::unordered_map<std::string, VkPipelineLayout> pipelineLayouts;
 std::unordered_map<std::string, VkDescriptorSetLayout> descriptorSetLayouts;
 std::unique_ptr<graphics::CommandPoolManager> gCommandPoolManager = nullptr;
@@ -39,7 +40,9 @@ std::unique_ptr<ar::ARSessionManager> gArSessionManager = nullptr;
 std::unique_ptr<graphics::ARCameraImage> gCameraImage = nullptr;
 //dummy egl context do deal with arcore bullshit. use it before getting each ar frame.
 ar::EglDummyContext m_eglDummy;
+int gDisplayRotation = 0;
 graphics::Renderable cube("cube");
+graphics::Renderable cameraBgQuad("camera_bg");
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -84,6 +87,16 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .AddDescriptorSetLayout(unshadedOpaqueDescriptorSetLayout)
             .Build();
     pipelineLayouts.insert({"unshaded_opaque", unshadedOpaquePipelineLayout});
+    // Camera background: UBO (binding 0, vertex) + combined image sampler (binding 1, fragment)
+    auto cameraBgDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
+            .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
+            .AddBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .Build();
+    descriptorSetLayouts.insert({"camera_bg", cameraBgDescriptorSetLayout});
+    auto cameraBgPipelineLayout = graphics::PipelineLayoutBuilder(gVkContext->GetDevice())
+            .AddDescriptorSetLayout(cameraBgDescriptorSetLayout)
+            .Build();
+    pipelineLayouts.insert({"camera_bg", cameraBgPipelineLayout});
     ANativeWindow_release(window);
     //Creates the command pool manager
     gCommandPoolManager = std::make_unique<graphics::CommandPoolManager>(gVkContext->GetDevice(),
@@ -108,9 +121,20 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                     meshData.indexCount,
                     "cube");
         }
+        auto quadData = io::MeshLoader::CreateFullscreenQuad();
+        gStaticMeshes["fullscreen_quad"] = std::make_unique<graphics::StaticMesh>(
+                gVkContext->GetDevice(),
+                gVkContext->GetAllocator(),
+                *gCommandPoolManager,
+                quadData.vertices.data(),
+                quadData.vertexCount,
+                quadData.indices.data(),
+                quadData.indexCount,
+                "fullscreen_quad");
     }
     //load the meshes
     cube.SetMesh(gStaticMeshes["cube"].get());
+    cameraBgQuad.SetMesh(gStaticMeshes["fullscreen_quad"].get());
     //create the frame timer
     gFrameTimer = std::make_unique<graphics::FrameTimer>();
     //dummy egl context to deal with ar session bullshit
@@ -132,6 +156,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                                                     jint height,
                                                                                     jint rotation) {
     vkDeviceWaitIdle(gVkContext->GetDevice());
+    gDisplayRotation = rotation;
     gArSessionManager->onSurfaceChanged(rotation, width, height);
     // Create the resources that rely on screen size
     if (gVkContext->GetSwapchain() == VK_NULL_HANDLE)
@@ -148,6 +173,14 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                                    graphics::UnshadedOpaqueConfig(),
                                                                    pipelineLayouts["unshaded_opaque"],
                                                                    descriptorSetLayouts["unshaded_opaque"]);
+    gCameraBgPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
+                                                              gVkContext->GetDevice(),
+                                                              gVkContext->GetAllocator(),
+                                                              graphics::CameraBackgroundConfig(
+                                                                      gCameraImage.get(),
+                                                                      &gDisplayRotation),
+                                                              pipelineLayouts["camera_bg"],
+                                                              descriptorSetLayouts["camera_bg"]);
     gFrameSync->RecreateForSwapchain(gVkContext->getSwapchainImageCount());
 }
 extern "C"
@@ -211,11 +244,15 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube, frameIndex);
     gOffscreenRenderPass->End(cmd);
     //begin the swap chain render pass
-    gSwapChainRenderPass->setClearColor(1.0f, 0.0f, 0.0f, 0.0f);
+    gSwapChainRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     gSwapChainRenderPass->Begin(cmd,
                                 gSwapChainRenderPass->GetFramebuffer(imageIndex),
                                 gVkContext->getSwapchainExtent());
-
+    // Draw camera background (fullscreen quad with camera texture, depth=1.0)
+    if (gCameraImage->IsValid()) {
+        gCameraBgPipeline->Bind(cmd);
+        gCameraBgPipeline->Draw(cmd, nullptr, &cameraBgQuad, frameIndex);
+    }
     gSwapChainRenderPass->End(cmd);
     gCommandPoolManager->EndFrame();
 
@@ -266,6 +303,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     {
         vkDestroyPipelineLayout(gVkContext->GetDevice(), value, nullptr);
     }
+    gCameraBgPipeline = nullptr;
     gUnshadedOpaquePipeline = nullptr;
     gCommandPoolManager = nullptr;
     gFrameSync = nullptr;

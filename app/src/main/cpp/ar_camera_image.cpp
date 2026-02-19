@@ -180,6 +180,10 @@ VkImageView ARCameraImage::GetCurrentImageView() const {
     return frameResources.Current().imageView;
 }
 
+VkImageView ARCameraImage::GetImageView(uint32_t index) const {
+    return frameResources[index].imageView;
+}
+
 // ============================================================
 // Resource creation / destruction
 // ============================================================
