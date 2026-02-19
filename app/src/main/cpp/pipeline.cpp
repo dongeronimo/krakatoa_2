@@ -206,9 +206,7 @@ struct CameraBgUniformBuffer {
 struct CameraBgState {
     VkSampler sampler = VK_NULL_HANDLE;
     VkDevice  device  = VK_NULL_HANDLE;
-    uint32_t  lastCameraWidth  = 0;
-    uint32_t  lastCameraHeight = 0;
-    bool      descriptorsWritten = false;
+    bool      uboBindingsWritten = false;
 
     ~CameraBgState() {
         if (sampler != VK_NULL_HANDLE) {
@@ -288,49 +286,47 @@ PipelineConfig graphics::CameraBackgroundConfig(ARCameraImage* cameraImage,
                                             Concatenate("CameraBgDescSet[", i, "]"));
             }
 
-            state->descriptorsWritten = false;
+            state->uboBindingsWritten = false;
         }
 
-        // -- Write/update descriptor sets when camera image changes size --
-        bool cameraResChanged = cameraImage->GetWidth()  != state->lastCameraWidth ||
-                                cameraImage->GetHeight() != state->lastCameraHeight;
-        if (!state->descriptorsWritten || cameraResChanged) {
-            state->lastCameraWidth  = cameraImage->GetWidth();
-            state->lastCameraHeight = cameraImage->GetHeight();
-
+        // -- One-time: write UBO bindings for all descriptor sets --
+        if (!state->uboBindingsWritten) {
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-                VkDescriptorSet ds = ub->descriptorSets[i];
-
-                // Binding 0: UBO
                 VkDescriptorBufferInfo bufInfo{};
                 bufInfo.buffer = ub->gpuBuffer[i];
                 bufInfo.offset = 0;
                 bufInfo.range  = sizeof(CameraBgUniformBuffer);
 
-                // Binding 1: combined image sampler
-                VkDescriptorImageInfo imgInfo{};
-                imgInfo.sampler     = state->sampler;
-                imgInfo.imageView   = cameraImage->GetImageView(i);
-                imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                VkWriteDescriptorSet write{};
+                write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet          = ub->descriptorSets[i];
+                write.dstBinding      = 0;
+                write.descriptorCount = 1;
+                write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                write.pBufferInfo     = &bufInfo;
 
-                VkWriteDescriptorSet writes[2]{};
-                writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                writes[0].dstSet          = ds;
-                writes[0].dstBinding      = 0;
-                writes[0].descriptorCount = 1;
-                writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-                writes[0].pBufferInfo     = &bufInfo;
-
-                writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                writes[1].dstSet          = ds;
-                writes[1].dstBinding      = 1;
-                writes[1].descriptorCount = 1;
-                writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                writes[1].pImageInfo      = &imgInfo;
-
-                vkUpdateDescriptorSets(pipeline.GetDevice(), 2, writes, 0, nullptr);
+                vkUpdateDescriptorSets(pipeline.GetDevice(), 1, &write, 0, nullptr);
             }
-            state->descriptorsWritten = true;
+            state->uboBindingsWritten = true;
+        }
+
+        // -- Every frame: update current descriptor set's image to the
+        //    image that was just transitioned by ARCameraImage::Update() --
+        {
+            VkDescriptorImageInfo imgInfo{};
+            imgInfo.sampler     = state->sampler;
+            imgInfo.imageView   = cameraImage->GetCurrentImageView();
+            imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkWriteDescriptorSet write{};
+            write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet          = ub->descriptorSets.Current();
+            write.dstBinding      = 1;
+            write.descriptorCount = 1;
+            write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.pImageInfo      = &imgInfo;
+
+            vkUpdateDescriptorSets(pipeline.GetDevice(), 1, &write, 0, nullptr);
         }
 
         // -- Update UBO data (display rotation) --
