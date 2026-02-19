@@ -20,6 +20,12 @@ namespace ar {
         bool valid = false;
     };
 
+    /// One entry in the available-resolutions table
+    struct CameraResolution {
+        int32_t width  = 0;
+        int32_t height = 0;
+    };
+
     class ARSessionManager {
     public:
         bool initialize(JNIEnv* env, jobject context, jobject activity);
@@ -36,6 +42,17 @@ namespace ar {
         /// Access the latest camera frame (valid until next onDrawFrame call)
         const CameraFrame& getCameraFrame() const { return m_cameraFrame; }
 
+        /// Table of available CPU image resolutions, populated during initialize().
+        const std::vector<CameraResolution>& getAvailableResolutions() const { return m_resolutions; }
+
+        /// Index of the currently active resolution in the table (-1 if unset).
+        int32_t getCurrentResolutionIndex() const { return m_currentResolutionIndex; }
+
+        /// Switch to a different resolution at runtime.
+        /// Pauses the session, sets the config, and resumes.
+        /// Returns true on success.
+        bool setResolution(int32_t index);
+
         void forEachPlane(
                 const std::function<void(
                         int64_t planeId,
@@ -48,7 +65,7 @@ namespace ar {
         void getProjectionMatrix(float nearClip, float farClip, float* outMatrix);
 
     private:
-        void selectHighestResolutionConfig();
+        void queryAvailableResolutions();
         void releaseCameraImage();
 
         ar::ARCoreLoader& m_loader = ar::ARCoreLoader::getInstance();
@@ -65,6 +82,9 @@ namespace ar {
         int m_displayRotation = 0;
 
         bool m_isTracking = false;
+
+        std::vector<CameraResolution> m_resolutions;
+        int32_t m_currentResolutionIndex = -1;
     };
 }
 #endif //KRAKATOA_AR_MANAGER_H

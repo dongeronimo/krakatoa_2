@@ -2,6 +2,7 @@
 #include "ar_manager.h"
 #include "android_log.h"
 #include <cassert>
+#include <algorithm>
 #include <GLES3/gl3.h>
 namespace ar {
 
@@ -31,8 +32,12 @@ namespace ar {
         glGenTextures(1, &dummyTexture);
         m_loader.ArSession_setCameraTextureName(m_session, dummyTexture);
 
-        // ── Select highest-resolution camera config ──
-        selectHighestResolutionConfig();
+        // ── Query available resolutions and select the highest ──
+        queryAvailableResolutions();
+        if (!m_resolutions.empty()) {
+            // Default to highest resolution (last entry, sorted ascending by pixel count)
+            setResolution(static_cast<int32_t>(m_resolutions.size()) - 1);
+        }
 
         LOGI("ARSessionManager::initialize - creating config...");
         m_loader.ArConfig_create(m_session, &m_config);
@@ -173,8 +178,10 @@ namespace ar {
         m_loader.ArCamera_release(camera);
     }
 
-    void ARSessionManager::selectHighestResolutionConfig() {
-        // Query all supported camera configs with a default (accept-all) filter
+    void ARSessionManager::queryAvailableResolutions() {
+        m_resolutions.clear();
+        m_currentResolutionIndex = -1;
+
         ArCameraConfigFilter* filter = nullptr;
         m_loader.ArCameraConfigFilter_create(m_session, &filter);
 
@@ -186,14 +193,15 @@ namespace ar {
 
         int32_t numConfigs = 0;
         m_loader.ArCameraConfigList_getSize(m_session, configList, &numConfigs);
-        LOGI("ARSessionManager: %d camera configs available", numConfigs);
-
-        // Find the config with the largest CPU image (width * height)
-        int32_t bestIndex = -1;
-        int64_t bestPixels = 0;
 
         ArCameraConfig* tempConfig = nullptr;
         m_loader.ArCameraConfig_create(m_session, &tempConfig);
+
+        // Collect unique resolutions, deduplicate (ARCore may return
+        // multiple configs with the same CPU resolution but different
+        // GPU texture / FPS / depth settings).
+        struct Seen { int32_t w, h; };
+        std::vector<Seen> seen;
 
         for (int32_t i = 0; i < numConfigs; ++i) {
             m_loader.ArCameraConfigList_getItem(m_session, configList, i, tempConfig);
@@ -201,33 +209,96 @@ namespace ar {
             int32_t w = 0, h = 0;
             m_loader.ArCameraConfig_getImageDimensions(m_session, tempConfig, &w, &h);
 
-            int64_t pixels = static_cast<int64_t>(w) * h;
-            LOGI("  config[%d]: CPU image %dx%d (%lld px)", i, w, h, (long long)pixels);
-
-            if (pixels > bestPixels) {
-                bestPixels = pixels;
-                bestIndex = i;
+            // Deduplicate
+            bool dup = false;
+            for (auto& s : seen) {
+                if (s.w == w && s.h == h) { dup = true; break; }
             }
+            if (dup) continue;
+            seen.push_back({w, h});
+
+            m_resolutions.push_back({w, h});
         }
 
-        // Apply the highest-resolution config
-        if (bestIndex >= 0) {
-            m_loader.ArCameraConfigList_getItem(m_session, configList, bestIndex, tempConfig);
+        // Sort ascending by pixel count
+        std::sort(m_resolutions.begin(), m_resolutions.end(),
+                  [](const CameraResolution& a, const CameraResolution& b) {
+                      return (int64_t)a.width * a.height < (int64_t)b.width * b.height;
+                  });
+
+        m_loader.ArCameraConfig_destroy(tempConfig);
+        m_loader.ArCameraConfigList_destroy(configList);
+        m_loader.ArCameraConfigFilter_destroy(filter);
+
+        LOGI("ARSessionManager: %zu unique resolutions available:", m_resolutions.size());
+        for (size_t i = 0; i < m_resolutions.size(); ++i) {
+            LOGI("  [%zu] %dx%d", i, m_resolutions[i].width, m_resolutions[i].height);
+        }
+    }
+
+    bool ARSessionManager::setResolution(int32_t index) {
+        if (index < 0 || index >= static_cast<int32_t>(m_resolutions.size())) {
+            LOGE("ARSessionManager::setResolution: index %d out of range [0, %zu)",
+                 index, m_resolutions.size());
+            return false;
+        }
+
+        const auto& target = m_resolutions[index];
+        LOGI("ARSessionManager::setResolution -> [%d] %dx%d", index, target.width, target.height);
+
+        // Must release camera image before pausing
+        releaseCameraImage();
+
+        // Pause session (ArSession_setCameraConfig requires paused session)
+        m_loader.ArSession_pause(m_session);
+
+        // Find the ARCore config that matches this resolution
+        ArCameraConfigFilter* filter = nullptr;
+        m_loader.ArCameraConfigFilter_create(m_session, &filter);
+
+        ArCameraConfigList* configList = nullptr;
+        m_loader.ArCameraConfigList_create(m_session, &configList);
+
+        m_loader.ArSession_getSupportedCameraConfigsWithFilter(
+                m_session, filter, configList);
+
+        int32_t numConfigs = 0;
+        m_loader.ArCameraConfigList_getSize(m_session, configList, &numConfigs);
+
+        ArCameraConfig* tempConfig = nullptr;
+        m_loader.ArCameraConfig_create(m_session, &tempConfig);
+
+        bool found = false;
+        for (int32_t i = 0; i < numConfigs; ++i) {
+            m_loader.ArCameraConfigList_getItem(m_session, configList, i, tempConfig);
 
             int32_t w = 0, h = 0;
             m_loader.ArCameraConfig_getImageDimensions(m_session, tempConfig, &w, &h);
 
-            ArStatus st = m_loader.ArSession_setCameraConfig(m_session, tempConfig);
-            if (st == AR_SUCCESS) {
-                LOGI("ARSessionManager: selected camera config[%d] %dx%d", bestIndex, w, h);
-            } else {
-                LOGW("ARSessionManager: failed to set camera config[%d]: %d", bestIndex, st);
+            if (w == target.width && h == target.height) {
+                ArStatus st = m_loader.ArSession_setCameraConfig(m_session, tempConfig);
+                if (st == AR_SUCCESS) {
+                    m_currentResolutionIndex = index;
+                    found = true;
+                    LOGI("ARSessionManager: camera config set to %dx%d", w, h);
+                } else {
+                    LOGE("ARSessionManager: ArSession_setCameraConfig failed: %d", st);
+                }
+                break;
             }
         }
 
         m_loader.ArCameraConfig_destroy(tempConfig);
         m_loader.ArCameraConfigList_destroy(configList);
         m_loader.ArCameraConfigFilter_destroy(filter);
+
+        // Resume session
+        ArStatus st = m_loader.ArSession_resume(m_session);
+        if (st != AR_SUCCESS) {
+            LOGE("ARSessionManager: ArSession_resume failed after config change: %d", st);
+        }
+
+        return found;
     }
 
     void ARSessionManager::getProjectionMatrix(float nearClip, float farClip, float* outMatrix) {

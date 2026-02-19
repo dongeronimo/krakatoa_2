@@ -346,3 +346,34 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnTouchEvent(
                                                                                 jint action) {
     // TODO: implement nativeOnTouchEvent()
 }
+extern "C"
+JNIEXPORT jintArray JNICALL
+Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeGetAvailableResolutions(
+        JNIEnv *env, jobject thiz) {
+    if (!gArSessionManager) return nullptr;
+    const auto& resolutions = gArSessionManager->getAvailableResolutions();
+    // Return flat array: [w0, h0, w1, h1, ...]
+    jintArray result = env->NewIntArray(static_cast<jsize>(resolutions.size() * 2));
+    if (!result) return nullptr;
+    std::vector<jint> flat(resolutions.size() * 2);
+    for (size_t i = 0; i < resolutions.size(); ++i) {
+        flat[i * 2]     = resolutions[i].width;
+        flat[i * 2 + 1] = resolutions[i].height;
+    }
+    env->SetIntArrayRegion(result, 0, static_cast<jsize>(flat.size()), flat.data());
+    return result;
+}
+extern "C"
+JNIEXPORT jint JNICALL
+Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeGetCurrentResolutionIndex(
+        JNIEnv *env, jobject thiz) {
+    if (!gArSessionManager) return -1;
+    return gArSessionManager->getCurrentResolutionIndex();
+}
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeSetResolution(
+        JNIEnv *env, jobject thiz, jint index) {
+    if (!gArSessionManager) return JNI_FALSE;
+    return gArSessionManager->setResolution(index) ? JNI_TRUE : JNI_FALSE;
+}

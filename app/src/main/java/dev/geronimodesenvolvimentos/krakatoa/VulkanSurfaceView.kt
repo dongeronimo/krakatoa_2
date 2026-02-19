@@ -110,6 +110,19 @@ class VulkanSurfaceView(context: Context,var assetManager: AssetManager,var acti
         return super.onTouchEvent(event)
     }
 
+    /// Returns flat [w0, h0, w1, h1, ...] sorted by pixel count ascending.
+    /// Index in this list corresponds to the index for [setResolution].
+    fun getAvailableResolutions(): List<Pair<Int, Int>> {
+        val flat = nativeGetAvailableResolutions() ?: return emptyList()
+        return (flat.indices step 2).map { flat[it] to flat[it + 1] }
+    }
+
+    fun getCurrentResolutionIndex(): Int = nativeGetCurrentResolutionIndex()
+
+    /// Switch camera CPU image resolution at runtime.
+    /// [index] corresponds to the list returned by [getAvailableResolutions].
+    fun setResolution(index: Int): Boolean = nativeSetResolution(index)
+
     private external fun nativeOnSurfaceCreated(surface: Surface, assetManager: AssetManager, activity: Activity)
     private external fun nativeOnSurfaceChanged(width: Int, height: Int, rotation: Int)
     private external fun nativeOnSurfaceDestroyed()
@@ -119,4 +132,7 @@ class VulkanSurfaceView(context: Context,var assetManager: AssetManager,var acti
     private external fun nativeOnPause()
     private external fun nativeActivateArcore(context: Context, activity: Activity)
     private external fun nativeOnTouchEvent(x: Float, y: Float, action: Int)
+    private external fun nativeGetAvailableResolutions(): IntArray?
+    private external fun nativeGetCurrentResolutionIndex(): Int
+    private external fun nativeSetResolution(index: Int): Boolean
 }
