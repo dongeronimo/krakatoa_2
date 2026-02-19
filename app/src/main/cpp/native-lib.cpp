@@ -24,6 +24,7 @@
 #include "ar_manager.h"
 #include "egl_dummy_context.h"
 #include "offscreen_render_pass.h"
+#include "ar_camera_image.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
@@ -35,6 +36,7 @@ std::unique_ptr<graphics::FrameSync> gFrameSync = nullptr;
 std::unordered_map<std::string, std::unique_ptr<graphics::StaticMesh>> gStaticMeshes;
 std::unique_ptr<graphics::FrameTimer> gFrameTimer = nullptr;
 std::unique_ptr<ar::ARSessionManager> gArSessionManager = nullptr;
+std::unique_ptr<graphics::ARCameraImage> gCameraImage = nullptr;
 //dummy egl context do deal with arcore bullshit. use it before getting each ar frame.
 ar::EglDummyContext m_eglDummy;
 graphics::Renderable cube("cube");
@@ -118,6 +120,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     gArSessionManager = std::make_unique<ar::ARSessionManager>();
     gArSessionManager->initialize(env, activity, activity);
     gArSessionManager->onResume();
+    //camera feed -> vulkan image (ring buffered, CPU upload, no OES)
+    gCameraImage = std::make_unique<graphics::ARCameraImage>(gVkContext->GetDevice(),
+                                                              gVkContext->GetAllocator());
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -159,12 +164,10 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gFrameTimer->Tick();
     gFrameSync->AdvanceFrame();
     gCommandPoolManager->AdvanceFrame();
-    // Update ARCore first - this updates the camera texture
+    gCameraImage->AdvanceFrame();
+    // Update ARCore first - acquires CPU camera image (YUV planes)
     m_eglDummy.makeCurrent();
     gArSessionManager->onDrawFrame();
-    if (gArSessionManager) {
-        gArSessionManager->onDrawFrame();
-    }
     gFrameSync->WaitForCurrentFrame();
 
     VkSemaphore acquireSem = gFrameSync->GetNextAcquireSemaphore();
@@ -179,6 +182,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gCommandPoolManager->BeginFrame();
     VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
     const uint32_t frameIndex = gVkContext->GetFrameIndex();
+    // Upload camera feed (YUV->RGBA) into the ring-buffered Vulkan image.
+    // After this call the current image is in SHADER_READ_ONLY_OPTIMAL, ready to sample.
+    gCameraImage->Update(cmd, gArSessionManager->getCameraFrame());
     ////////////////////// Update objects data /////////////////////////////////////////////////////
     //Set camera
     glm::vec3 cameraPos = {3.0f, 5.0f, 7.0f};
@@ -249,6 +255,7 @@ JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEnv *env,
                                                                            jobject thiz) {
     vkDeviceWaitIdle(gVkContext->GetDevice());
+    gCameraImage = nullptr;
     gArSessionManager.release();
     gStaticMeshes.clear();
     for (const auto& [key, value] : descriptorSetLayouts) {
