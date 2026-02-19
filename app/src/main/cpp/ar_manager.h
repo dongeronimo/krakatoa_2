@@ -48,6 +48,7 @@ namespace ar {
         void getProjectionMatrix(float nearClip, float farClip, float* outMatrix);
 
     private:
+        void selectHighestResolutionConfig();
         void releaseCameraImage();
 
         ar::ARCoreLoader& m_loader = ar::ARCoreLoader::getInstance();

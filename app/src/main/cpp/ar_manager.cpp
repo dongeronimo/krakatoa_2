@@ -30,6 +30,10 @@ namespace ar {
         GLuint dummyTexture = 0;
         glGenTextures(1, &dummyTexture);
         m_loader.ArSession_setCameraTextureName(m_session, dummyTexture);
+
+        // ── Select highest-resolution camera config ──
+        selectHighestResolutionConfig();
+
         LOGI("ARSessionManager::initialize - creating config...");
         m_loader.ArConfig_create(m_session, &m_config);
 
@@ -167,6 +171,63 @@ namespace ar {
         m_loader.ArFrame_acquireCamera(m_session, m_frame, &camera);
         m_loader.ArCamera_getViewMatrix(m_session, camera, outMatrix);
         m_loader.ArCamera_release(camera);
+    }
+
+    void ARSessionManager::selectHighestResolutionConfig() {
+        // Query all supported camera configs with a default (accept-all) filter
+        ArCameraConfigFilter* filter = nullptr;
+        m_loader.ArCameraConfigFilter_create(m_session, &filter);
+
+        ArCameraConfigList* configList = nullptr;
+        m_loader.ArCameraConfigList_create(m_session, &configList);
+
+        m_loader.ArSession_getSupportedCameraConfigsWithFilter(
+                m_session, filter, configList);
+
+        int32_t numConfigs = 0;
+        m_loader.ArCameraConfigList_getSize(m_session, configList, &numConfigs);
+        LOGI("ARSessionManager: %d camera configs available", numConfigs);
+
+        // Find the config with the largest CPU image (width * height)
+        int32_t bestIndex = -1;
+        int64_t bestPixels = 0;
+
+        ArCameraConfig* tempConfig = nullptr;
+        m_loader.ArCameraConfig_create(m_session, &tempConfig);
+
+        for (int32_t i = 0; i < numConfigs; ++i) {
+            m_loader.ArCameraConfigList_getItem(m_session, configList, i, tempConfig);
+
+            int32_t w = 0, h = 0;
+            m_loader.ArCameraConfig_getImageDimensions(m_session, tempConfig, &w, &h);
+
+            int64_t pixels = static_cast<int64_t>(w) * h;
+            LOGI("  config[%d]: CPU image %dx%d (%lld px)", i, w, h, (long long)pixels);
+
+            if (pixels > bestPixels) {
+                bestPixels = pixels;
+                bestIndex = i;
+            }
+        }
+
+        // Apply the highest-resolution config
+        if (bestIndex >= 0) {
+            m_loader.ArCameraConfigList_getItem(m_session, configList, bestIndex, tempConfig);
+
+            int32_t w = 0, h = 0;
+            m_loader.ArCameraConfig_getImageDimensions(m_session, tempConfig, &w, &h);
+
+            ArStatus st = m_loader.ArSession_setCameraConfig(m_session, tempConfig);
+            if (st == AR_SUCCESS) {
+                LOGI("ARSessionManager: selected camera config[%d] %dx%d", bestIndex, w, h);
+            } else {
+                LOGW("ARSessionManager: failed to set camera config[%d]: %d", bestIndex, st);
+            }
+        }
+
+        m_loader.ArCameraConfig_destroy(tempConfig);
+        m_loader.ArCameraConfigList_destroy(configList);
+        m_loader.ArCameraConfigFilter_destroy(filter);
     }
 
     void ARSessionManager::getProjectionMatrix(float nearClip, float farClip, float* outMatrix) {
