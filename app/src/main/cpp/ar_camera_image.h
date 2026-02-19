@@ -9,22 +9,21 @@
 namespace graphics {
 
     /**
-     * Manages a ring-buffered Vulkan image that receives the ARCore camera feed
-     * every frame. The camera provides YUV (NV21/NV12) data which is converted
-     * to RGBA on the CPU, written to a persistently-mapped staging buffer, and
-     * then copied into the GPU image via inline command buffer commands.
+     * Manages ring-buffered Y and UV Vulkan images for the ARCore camera feed.
      *
-     * No OES texture is ever used. This is a pure CPU-upload path.
+     * The camera provides NV12/NV21 YUV data.  Y and UV planes are memcpy'd
+     * directly into staging buffers (no CPU-side colour conversion) and then
+     * copied to GPU-optimal images.  The fragment shader converts YUV -> RGB.
+     *
+     * Staging buffers use VMA_MEMORY_USAGE_AUTO + HOST_ACCESS_SEQUENTIAL_WRITE
+     * so that on mobile unified-memory GPUs VMA places them in device-local,
+     * host-visible memory, avoiding an extra DMA copy.
      *
      * Usage:
-     *   // At start of frame (before BeginFrame / command recording):
      *   cameraImage.AdvanceFrame();
-     *
-     *   // Inside command buffer recording, after acquiring the camera frame:
      *   cameraImage.Update(cmd, arSessionManager.getCameraFrame());
-     *
-     *   // Later in the frame, sample the image:
-     *   VkImageView view = cameraImage.GetCurrentImageView();
+     *   VkImageView yView  = cameraImage.GetCurrentYImageView();
+     *   VkImageView uvView = cameraImage.GetCurrentUVImageView();
      */
     class ARCameraImage {
     public:
@@ -38,33 +37,36 @@ namespace graphics {
         void AdvanceFrame();
 
         /**
-         * Convert the camera frame from YUV to RGBA, upload to staging buffer,
-         * and record copy + barrier commands into cmd.
-         *
-         * After this call the current image is in SHADER_READ_ONLY_OPTIMAL layout.
-         * If the frame is invalid or the camera has no image yet, this is a no-op.
-         *
-         * If the camera resolution changed since the last call, all ring-buffer
-         * resources are recreated automatically.
+         * Memcpy Y and UV planes into staging, record barrier + copy commands.
+         * After this call both images are in SHADER_READ_ONLY_OPTIMAL layout.
          */
         void Update(VkCommandBuffer cmd, const ar::CameraFrame& frame);
 
-        VkImage       GetCurrentImage()     const;
-        VkImageView   GetCurrentImageView() const;
-        /// Access a specific ring-buffer slot's image view (for descriptor set writing).
-        VkImageView   GetImageView(uint32_t index) const;
-        uint32_t      GetWidth()            const { return width; }
-        uint32_t      GetHeight()           const { return height; }
-        bool          IsValid()             const { return valid; }
+        VkImageView   GetCurrentYImageView()  const;
+        VkImageView   GetCurrentUVImageView() const;
+        VkImageView   GetYImageView(uint32_t index)  const;
+        VkImageView   GetUVImageView(uint32_t index) const;
+        uint32_t      GetWidth()  const { return width; }
+        uint32_t      GetHeight() const { return height; }
+        bool          IsValid()   const { return valid; }
 
     private:
         struct FrameResources {
-            VkImage        image            = VK_NULL_HANDLE;
-            VmaAllocation  imageAllocation  = VK_NULL_HANDLE;
-            VkImageView    imageView        = VK_NULL_HANDLE;
-            VkBuffer       stagingBuffer    = VK_NULL_HANDLE;
-            VmaAllocation  stagingAllocation= VK_NULL_HANDLE;
-            void*          mappedData       = nullptr;   // persistently mapped
+            // Y plane (R8_UNORM, full resolution)
+            VkImage        yImage            = VK_NULL_HANDLE;
+            VmaAllocation  yImageAllocation  = VK_NULL_HANDLE;
+            VkImageView    yImageView        = VK_NULL_HANDLE;
+            VkBuffer       yStagingBuffer    = VK_NULL_HANDLE;
+            VmaAllocation  yStagingAllocation= VK_NULL_HANDLE;
+            void*          yMappedData       = nullptr;
+
+            // UV plane (R8G8_UNORM, half resolution)
+            VkImage        uvImage            = VK_NULL_HANDLE;
+            VmaAllocation  uvImageAllocation  = VK_NULL_HANDLE;
+            VkImageView    uvImageView        = VK_NULL_HANDLE;
+            VkBuffer       uvStagingBuffer    = VK_NULL_HANDLE;
+            VmaAllocation  uvStagingAllocation= VK_NULL_HANDLE;
+            void*          uvMappedData       = nullptr;
         };
 
         VkDevice     device    = VK_NULL_HANDLE;
@@ -78,12 +80,6 @@ namespace graphics {
 
         void CreateResources(uint32_t w, uint32_t h);
         void DestroyResources();
-
-        /// Convert NV21/NV12 YUV camera data to tightly-packed RGBA.
-        static void ConvertYUVToRGBA(const ar::CameraFrame& frame,
-                                     uint8_t* dst,
-                                     uint32_t dstWidth,
-                                     uint32_t dstHeight);
     };
 
 } // namespace graphics

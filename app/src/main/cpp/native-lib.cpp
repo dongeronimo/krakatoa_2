@@ -87,10 +87,11 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .AddDescriptorSetLayout(unshadedOpaqueDescriptorSetLayout)
             .Build();
     pipelineLayouts.insert({"unshaded_opaque", unshadedOpaquePipelineLayout});
-    // Camera background: UBO (binding 0, vertex) + combined image sampler (binding 1, fragment)
+    // Camera background: UBO (binding 0) + Y sampler (binding 1) + UV sampler (binding 2)
     auto cameraBgDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
             .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
             .AddBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .AddBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
             .Build();
     descriptorSetLayouts.insert({"camera_bg", cameraBgDescriptorSetLayout});
     auto cameraBgPipelineLayout = graphics::PipelineLayoutBuilder(gVkContext->GetDevice())

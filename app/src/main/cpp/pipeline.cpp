@@ -233,7 +233,7 @@ PipelineConfig graphics::CameraBackgroundConfig(ARCameraImage* cameraImage,
 
     config.descriptorPoolSizes = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         MAX_DESCRIPTOR_SETS_PER_POOL},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,  MAX_DESCRIPTOR_SETS_PER_POOL}
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,  MAX_DESCRIPTOR_SETS_PER_POOL * 2}  // Y + UV
     };
 
     // Shared state captured by the lambda — destroyed when the pipeline dies
@@ -250,7 +250,7 @@ PipelineConfig graphics::CameraBackgroundConfig(ARCameraImage* cameraImage,
         if (ub == nullptr) {
             state->device = pipeline.GetDevice();
 
-            // Create sampler
+            // Create sampler (shared by Y and UV textures)
             VkSamplerCreateInfo samplerInfo{};
             samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
             samplerInfo.magFilter    = VK_FILTER_LINEAR;
@@ -310,23 +310,35 @@ PipelineConfig graphics::CameraBackgroundConfig(ARCameraImage* cameraImage,
             state->uboBindingsWritten = true;
         }
 
-        // -- Every frame: update current descriptor set's image to the
-        //    image that was just transitioned by ARCameraImage::Update() --
+        // -- Every frame: update Y and UV image bindings for current desc set --
         {
-            VkDescriptorImageInfo imgInfo{};
-            imgInfo.sampler     = state->sampler;
-            imgInfo.imageView   = cameraImage->GetCurrentImageView();
-            imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            VkDescriptorImageInfo yImgInfo{};
+            yImgInfo.sampler     = state->sampler;
+            yImgInfo.imageView   = cameraImage->GetCurrentYImageView();
+            yImgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-            VkWriteDescriptorSet write{};
-            write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet          = ub->descriptorSets.Current();
-            write.dstBinding      = 1;
-            write.descriptorCount = 1;
-            write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            write.pImageInfo      = &imgInfo;
+            VkDescriptorImageInfo uvImgInfo{};
+            uvImgInfo.sampler     = state->sampler;
+            uvImgInfo.imageView   = cameraImage->GetCurrentUVImageView();
+            uvImgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-            vkUpdateDescriptorSets(pipeline.GetDevice(), 1, &write, 0, nullptr);
+            VkWriteDescriptorSet writes[2]{};
+            // Binding 1: Y texture
+            writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet          = ub->descriptorSets.Current();
+            writes[0].dstBinding      = 1;
+            writes[0].descriptorCount = 1;
+            writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[0].pImageInfo      = &yImgInfo;
+            // Binding 2: UV texture
+            writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet          = ub->descriptorSets.Current();
+            writes[1].dstBinding      = 2;
+            writes[1].descriptorCount = 1;
+            writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[1].pImageInfo      = &uvImgInfo;
+
+            vkUpdateDescriptorSets(pipeline.GetDevice(), 2, writes, 0, nullptr);
         }
 
         // -- Update UBO data (display rotation) --
