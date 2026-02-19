@@ -45,4 +45,6 @@ void main()
     }
 
     fragUV = rotated + 0.5;
+    // Vulkan NDC Y is top-down (-1=top, +1=bottom), so flip V
+    fragUV.y = 1.0 - fragUV.y;
 }
