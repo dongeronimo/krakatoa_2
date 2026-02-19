@@ -98,23 +98,23 @@ MeshData MeshLoader::CreateFullscreenQuad() {
     // 4 vertices covering NDC [-1,1] x [-1,1], Z=0
     // Vertex format: px py pz  nx ny nz  u v
     //
-    //  V0 (-1,+1)----V1 (+1,+1)     UV (0,0)----(1,0)
+    //  V2 (-1,-1)----V3 (+1,-1)     UV (0,0)----(1,0)   ← top of screen
     //     |  \           |               |  \        |
     //     |    \         |               |    \      |
     //     |      \       |               |      \    |
-    //  V2 (-1,-1)----V3 (+1,-1)     UV (0,1)----(1,1)
+    //  V0 (-1,+1)----V1 (+1,+1)     UV (0,1)----(1,1)   ← bottom of screen
     //
-    // Vulkan NDC: Y points down (+1 = bottom), UV: (0,0) = top-left
+    // Vulkan NDC: Y=-1 is top, Y=+1 is bottom. UV (0,0) = top-left of texture.
     result.vertexCount = 4;
     result.vertices = {
-        // V0: top-left
-        -1.0f,  1.0f, 0.0f,   0.0f, 0.0f, -1.0f,   0.0f, 0.0f,
-        // V1: top-right
-         1.0f,  1.0f, 0.0f,   0.0f, 0.0f, -1.0f,   1.0f, 0.0f,
-        // V2: bottom-left
-        -1.0f, -1.0f, 0.0f,   0.0f, 0.0f, -1.0f,   0.0f, 1.0f,
-        // V3: bottom-right
-         1.0f, -1.0f, 0.0f,   0.0f, 0.0f, -1.0f,   1.0f, 1.0f,
+        // V0: bottom-left (Vulkan NDC)
+        -1.0f,  1.0f, 0.0f,   0.0f, 0.0f, -1.0f,   0.0f, 1.0f,
+        // V1: bottom-right
+         1.0f,  1.0f, 0.0f,   0.0f, 0.0f, -1.0f,   1.0f, 1.0f,
+        // V2: top-left
+        -1.0f, -1.0f, 0.0f,   0.0f, 0.0f, -1.0f,   0.0f, 0.0f,
+        // V3: top-right
+         1.0f, -1.0f, 0.0f,   0.0f, 0.0f, -1.0f,   1.0f, 0.0f,
     };
 
     // Two CCW triangles: V0-V2-V1, V1-V2-V3
