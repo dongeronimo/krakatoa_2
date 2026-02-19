@@ -91,3 +91,36 @@ MeshData MeshLoader::Load(const std::string& assetPath) {
 
     return result;
 }
+
+MeshData MeshLoader::CreateFullscreenQuad() {
+    MeshData result;
+
+    // 4 vertices covering NDC [-1,1] x [-1,1], Z=0
+    // Vertex format: px py pz  nx ny nz  u v
+    //
+    //  V2 (-1,-1)----V3 (+1,-1)     UV (0,0)----(1,0)   ← top of screen
+    //     |  \           |               |  \        |
+    //     |    \         |               |    \      |
+    //     |      \       |               |      \    |
+    //  V0 (-1,+1)----V1 (+1,+1)     UV (0,1)----(1,1)   ← bottom of screen
+    //
+    // Vulkan NDC: Y=-1 is top, Y=+1 is bottom. UV (0,0) = top-left of texture.
+    result.vertexCount = 4;
+    result.vertices = {
+        // V0: bottom-left (Vulkan NDC)
+        -1.0f,  1.0f, 0.0f,   0.0f, 0.0f, -1.0f,   0.0f, 1.0f,
+        // V1: bottom-right
+         1.0f,  1.0f, 0.0f,   0.0f, 0.0f, -1.0f,   1.0f, 1.0f,
+        // V2: top-left
+        -1.0f, -1.0f, 0.0f,   0.0f, 0.0f, -1.0f,   0.0f, 0.0f,
+        // V3: top-right
+         1.0f, -1.0f, 0.0f,   0.0f, 0.0f, -1.0f,   1.0f, 0.0f,
+    };
+
+    // Two CCW triangles: V0-V2-V1, V1-V2-V3
+    result.indexCount = 6;
+    result.indices = { 0, 2, 1,  1, 2, 3 };
+
+    LOGI("MeshLoader: created fullscreen quad - 4 vertices, 6 indices");
+    return result;
+}

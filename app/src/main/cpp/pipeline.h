@@ -13,6 +13,7 @@ namespace graphics {
     class RDO;
     class RenderPass;
     class Pipeline;
+    class ARCameraImage;
 
     /**
      * Configuration for the variable parts of a graphics pipeline.
@@ -89,6 +90,19 @@ namespace graphics {
 
     /** Wireframe: no depth write, no blending, line mode */
     PipelineConfig WireframeConfig();
+
+    /**
+     * Camera background: renders the AR camera feed onto a fullscreen quad.
+     * Depth test ALWAYS + depth write, so it fills the far plane (z=1.0).
+     * No blending, no culling. The vertex shader rotates UVs based on
+     * the display rotation so the landscape camera image appears correct
+     * in portrait/landscape/etc.
+     *
+     * @param cameraImage  pointer to the ARCameraImage (ring-buffered GPU texture)
+     * @param displayRotation  pointer to the current Android display rotation (0-3)
+     */
+    PipelineConfig CameraBackgroundConfig(ARCameraImage* cameraImage,
+                                          const int* displayRotation);
 
     /**
      * A Vulkan graphics pipeline built from a PipelineConfig.

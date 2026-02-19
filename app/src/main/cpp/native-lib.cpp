@@ -24,10 +24,12 @@
 #include "ar_manager.h"
 #include "egl_dummy_context.h"
 #include "offscreen_render_pass.h"
+#include "ar_camera_image.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
 std::unique_ptr<graphics::Pipeline> gUnshadedOpaquePipeline = nullptr;
+std::unique_ptr<graphics::Pipeline> gCameraBgPipeline = nullptr;
 std::unordered_map<std::string, VkPipelineLayout> pipelineLayouts;
 std::unordered_map<std::string, VkDescriptorSetLayout> descriptorSetLayouts;
 std::unique_ptr<graphics::CommandPoolManager> gCommandPoolManager = nullptr;
@@ -35,9 +37,12 @@ std::unique_ptr<graphics::FrameSync> gFrameSync = nullptr;
 std::unordered_map<std::string, std::unique_ptr<graphics::StaticMesh>> gStaticMeshes;
 std::unique_ptr<graphics::FrameTimer> gFrameTimer = nullptr;
 std::unique_ptr<ar::ARSessionManager> gArSessionManager = nullptr;
+std::unique_ptr<graphics::ARCameraImage> gCameraImage = nullptr;
 //dummy egl context do deal with arcore bullshit. use it before getting each ar frame.
 ar::EglDummyContext m_eglDummy;
+int gDisplayRotation = 0;
 graphics::Renderable cube("cube");
+graphics::Renderable cameraBgQuad("camera_bg");
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -82,6 +87,17 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .AddDescriptorSetLayout(unshadedOpaqueDescriptorSetLayout)
             .Build();
     pipelineLayouts.insert({"unshaded_opaque", unshadedOpaquePipelineLayout});
+    // Camera background: UBO (binding 0) + Y sampler (binding 1) + UV sampler (binding 2)
+    auto cameraBgDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
+            .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
+            .AddBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .AddBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .Build();
+    descriptorSetLayouts.insert({"camera_bg", cameraBgDescriptorSetLayout});
+    auto cameraBgPipelineLayout = graphics::PipelineLayoutBuilder(gVkContext->GetDevice())
+            .AddDescriptorSetLayout(cameraBgDescriptorSetLayout)
+            .Build();
+    pipelineLayouts.insert({"camera_bg", cameraBgPipelineLayout});
     ANativeWindow_release(window);
     //Creates the command pool manager
     gCommandPoolManager = std::make_unique<graphics::CommandPoolManager>(gVkContext->GetDevice(),
@@ -106,9 +122,20 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                     meshData.indexCount,
                     "cube");
         }
+        auto quadData = io::MeshLoader::CreateFullscreenQuad();
+        gStaticMeshes["fullscreen_quad"] = std::make_unique<graphics::StaticMesh>(
+                gVkContext->GetDevice(),
+                gVkContext->GetAllocator(),
+                *gCommandPoolManager,
+                quadData.vertices.data(),
+                quadData.vertexCount,
+                quadData.indices.data(),
+                quadData.indexCount,
+                "fullscreen_quad");
     }
     //load the meshes
     cube.SetMesh(gStaticMeshes["cube"].get());
+    cameraBgQuad.SetMesh(gStaticMeshes["fullscreen_quad"].get());
     //create the frame timer
     gFrameTimer = std::make_unique<graphics::FrameTimer>();
     //dummy egl context to deal with ar session bullshit
@@ -118,6 +145,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     gArSessionManager = std::make_unique<ar::ARSessionManager>();
     gArSessionManager->initialize(env, activity, activity);
     gArSessionManager->onResume();
+    //camera feed -> vulkan image (ring buffered, CPU upload, no OES)
+    gCameraImage = std::make_unique<graphics::ARCameraImage>(gVkContext->GetDevice(),
+                                                              gVkContext->GetAllocator());
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -127,6 +157,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                                                     jint height,
                                                                                     jint rotation) {
     vkDeviceWaitIdle(gVkContext->GetDevice());
+    gDisplayRotation = rotation;
     gArSessionManager->onSurfaceChanged(rotation, width, height);
     // Create the resources that rely on screen size
     if (gVkContext->GetSwapchain() == VK_NULL_HANDLE)
@@ -143,6 +174,14 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                                    graphics::UnshadedOpaqueConfig(),
                                                                    pipelineLayouts["unshaded_opaque"],
                                                                    descriptorSetLayouts["unshaded_opaque"]);
+    gCameraBgPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
+                                                              gVkContext->GetDevice(),
+                                                              gVkContext->GetAllocator(),
+                                                              graphics::CameraBackgroundConfig(
+                                                                      gCameraImage.get(),
+                                                                      &gDisplayRotation),
+                                                              pipelineLayouts["camera_bg"],
+                                                              descriptorSetLayouts["camera_bg"]);
     gFrameSync->RecreateForSwapchain(gVkContext->getSwapchainImageCount());
 }
 extern "C"
@@ -159,12 +198,10 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gFrameTimer->Tick();
     gFrameSync->AdvanceFrame();
     gCommandPoolManager->AdvanceFrame();
-    // Update ARCore first - this updates the camera texture
+    gCameraImage->AdvanceFrame();
+    // Update ARCore first - acquires CPU camera image (YUV planes)
     m_eglDummy.makeCurrent();
     gArSessionManager->onDrawFrame();
-    if (gArSessionManager) {
-        gArSessionManager->onDrawFrame();
-    }
     gFrameSync->WaitForCurrentFrame();
 
     VkSemaphore acquireSem = gFrameSync->GetNextAcquireSemaphore();
@@ -179,6 +216,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gCommandPoolManager->BeginFrame();
     VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
     const uint32_t frameIndex = gVkContext->GetFrameIndex();
+    // Upload camera feed (YUV->RGBA) into the ring-buffered Vulkan image.
+    // After this call the current image is in SHADER_READ_ONLY_OPTIMAL, ready to sample.
+    gCameraImage->Update(cmd, gArSessionManager->getCameraFrame());
     ////////////////////// Update objects data /////////////////////////////////////////////////////
     //Set camera
     glm::vec3 cameraPos = {3.0f, 5.0f, 7.0f};
@@ -205,11 +245,15 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube, frameIndex);
     gOffscreenRenderPass->End(cmd);
     //begin the swap chain render pass
-    gSwapChainRenderPass->setClearColor(1.0f, 0.0f, 0.0f, 0.0f);
+    gSwapChainRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     gSwapChainRenderPass->Begin(cmd,
                                 gSwapChainRenderPass->GetFramebuffer(imageIndex),
                                 gVkContext->getSwapchainExtent());
-
+    // Draw camera background (fullscreen quad with camera texture, depth=1.0)
+    if (gCameraImage->IsValid()) {
+        gCameraBgPipeline->Bind(cmd);
+        gCameraBgPipeline->Draw(cmd, nullptr, &cameraBgQuad, frameIndex);
+    }
     gSwapChainRenderPass->End(cmd);
     gCommandPoolManager->EndFrame();
 
@@ -249,6 +293,7 @@ JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEnv *env,
                                                                            jobject thiz) {
     vkDeviceWaitIdle(gVkContext->GetDevice());
+    gCameraImage = nullptr;
     gArSessionManager.release();
     gStaticMeshes.clear();
     for (const auto& [key, value] : descriptorSetLayouts) {
@@ -259,6 +304,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     {
         vkDestroyPipelineLayout(gVkContext->GetDevice(), value, nullptr);
     }
+    gCameraBgPipeline = nullptr;
     gUnshadedOpaquePipeline = nullptr;
     gCommandPoolManager = nullptr;
     gFrameSync = nullptr;
@@ -299,4 +345,35 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnTouchEvent(
                                                                                 jfloat x, jfloat y,
                                                                                 jint action) {
     // TODO: implement nativeOnTouchEvent()
+}
+extern "C"
+JNIEXPORT jintArray JNICALL
+Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeGetAvailableResolutions(
+        JNIEnv *env, jobject thiz) {
+    if (!gArSessionManager) return nullptr;
+    const auto& resolutions = gArSessionManager->getAvailableResolutions();
+    // Return flat array: [w0, h0, w1, h1, ...]
+    jintArray result = env->NewIntArray(static_cast<jsize>(resolutions.size() * 2));
+    if (!result) return nullptr;
+    std::vector<jint> flat(resolutions.size() * 2);
+    for (size_t i = 0; i < resolutions.size(); ++i) {
+        flat[i * 2]     = resolutions[i].width;
+        flat[i * 2 + 1] = resolutions[i].height;
+    }
+    env->SetIntArrayRegion(result, 0, static_cast<jsize>(flat.size()), flat.data());
+    return result;
+}
+extern "C"
+JNIEXPORT jint JNICALL
+Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeGetCurrentResolutionIndex(
+        JNIEnv *env, jobject thiz) {
+    if (!gArSessionManager) return -1;
+    return gArSessionManager->getCurrentResolutionIndex();
+}
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeSetResolution(
+        JNIEnv *env, jobject thiz, jint index) {
+    if (!gArSessionManager) return JNI_FALSE;
+    return gArSessionManager->setResolution(index) ? JNI_TRUE : JNI_FALSE;
 }

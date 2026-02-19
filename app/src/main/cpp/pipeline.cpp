@@ -9,7 +9,7 @@
 #include "static_mesh.h"
 #include "rdo.h"
 #include "concatenate.h"
-#include "vk_debug.h"
+#include "ar_camera_image.h"
 #include <glm/gtc/type_ptr.hpp>
 using namespace graphics;
 
@@ -190,6 +190,185 @@ PipelineConfig graphics::WireframeConfig() {
     config.renderCallback = [](VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline, uint32_t frameIndex){
 
     };
+    return config;
+}
+
+// ============================================================
+// Camera background
+// ============================================================
+
+struct CameraBgUniformBuffer {
+    int32_t displayRotation;
+};
+
+// Shared state for the camera background pipeline, destroyed when the
+// pipeline (and its captured render callback) is destroyed.
+struct CameraBgState {
+    VkSampler sampler = VK_NULL_HANDLE;
+    VkDevice  device  = VK_NULL_HANDLE;
+    bool      uboBindingsWritten = false;
+
+    ~CameraBgState() {
+        if (sampler != VK_NULL_HANDLE) {
+            vkDestroySampler(device, sampler, nullptr);
+            LOGI("CameraBgState: sampler destroyed");
+        }
+    }
+};
+
+PipelineConfig graphics::CameraBackgroundConfig(ARCameraImage* cameraImage,
+                                                 const int* displayRotation) {
+    PipelineConfig config;
+    config.vertexShader   = "camera_bg.vert";
+    config.fragmentShader = "camera_bg.frag";
+
+    // Depth test ALWAYS + write: the quad outputs z=1.0 (far plane),
+    // so everything else drawn later (with depthCompare LESS) will pass.
+    config.depthTestEnable  = true;
+    config.depthWriteEnable = true;
+    config.depthCompareOp   = VK_COMPARE_OP_ALWAYS;
+
+    config.blendEnable = false;
+    config.cullMode    = VK_CULL_MODE_NONE;
+
+    config.descriptorPoolSizes = {
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         MAX_DESCRIPTOR_SETS_PER_POOL},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,  MAX_DESCRIPTOR_SETS_PER_POOL * 2}  // Y + UV
+    };
+
+    // Shared state captured by the lambda — destroyed when the pipeline dies
+    auto state = std::make_shared<CameraBgState>();
+
+    config.renderCallback = [cameraImage, displayRotation, state](
+            VkCommandBuffer cmd, RDO* /*rdo*/, Renderable* obj,
+            Pipeline& pipeline, uint32_t frameIndex) {
+
+        if (!cameraImage->IsValid()) return;
+
+        // -- First-time init: create sampler and UBO buffers --
+        std::shared_ptr<UniformBuffer> ub = pipeline.GetUniformBuffer(obj->GetId());
+        if (ub == nullptr) {
+            state->device = pipeline.GetDevice();
+
+            // Create sampler (shared by Y and UV textures)
+            VkSamplerCreateInfo samplerInfo{};
+            samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerInfo.magFilter    = VK_FILTER_LINEAR;
+            samplerInfo.minFilter    = VK_FILTER_LINEAR;
+            samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            VkResult r = vkCreateSampler(pipeline.GetDevice(), &samplerInfo,
+                                         nullptr, &state->sampler);
+            assert(r == VK_SUCCESS);
+
+            // Create UBO buffers
+            ub = std::make_shared<UniformBuffer>();
+            createGpuUniformBuffers<CameraBgUniformBuffer>(
+                    pipeline.GetAllocator(), MAX_FRAMES_IN_FLIGHT,
+                    ub->gpuBuffer, ub->gpuBufferAllocation, ub->mappedData);
+            ub->size = sizeof(CameraBgUniformBuffer);
+            ub->id   = obj->GetId();
+            ub->deathCounter = 100;
+
+            // Allocate descriptor sets (one per FIF)
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                ub->descriptorSets.Next() = pipeline.AllocateDescriptorSet();
+            }
+
+            pipeline.AddUniformBuffer(obj->GetId(), ub);
+
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                debug::SetBufferName(pipeline.GetDevice(), ub->gpuBuffer[i],
+                                     Concatenate("CameraBgUBO[", i, "]"));
+                debug::SetDescriptorSetName(pipeline.GetDevice(), ub->descriptorSets[i],
+                                            Concatenate("CameraBgDescSet[", i, "]"));
+            }
+
+            state->uboBindingsWritten = false;
+        }
+
+        // -- One-time: write UBO bindings for all descriptor sets --
+        if (!state->uboBindingsWritten) {
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                VkDescriptorBufferInfo bufInfo{};
+                bufInfo.buffer = ub->gpuBuffer[i];
+                bufInfo.offset = 0;
+                bufInfo.range  = sizeof(CameraBgUniformBuffer);
+
+                VkWriteDescriptorSet write{};
+                write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet          = ub->descriptorSets[i];
+                write.dstBinding      = 0;
+                write.descriptorCount = 1;
+                write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                write.pBufferInfo     = &bufInfo;
+
+                vkUpdateDescriptorSets(pipeline.GetDevice(), 1, &write, 0, nullptr);
+            }
+            state->uboBindingsWritten = true;
+        }
+
+        // -- Every frame: update Y and UV image bindings for current desc set --
+        {
+            VkDescriptorImageInfo yImgInfo{};
+            yImgInfo.sampler     = state->sampler;
+            yImgInfo.imageView   = cameraImage->GetCurrentYImageView();
+            yImgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkDescriptorImageInfo uvImgInfo{};
+            uvImgInfo.sampler     = state->sampler;
+            uvImgInfo.imageView   = cameraImage->GetCurrentUVImageView();
+            uvImgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkWriteDescriptorSet writes[2]{};
+            // Binding 1: Y texture
+            writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet          = ub->descriptorSets.Current();
+            writes[0].dstBinding      = 1;
+            writes[0].descriptorCount = 1;
+            writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[0].pImageInfo      = &yImgInfo;
+            // Binding 2: UV texture
+            writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet          = ub->descriptorSets.Current();
+            writes[1].dstBinding      = 2;
+            writes[1].descriptorCount = 1;
+            writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[1].pImageInfo      = &uvImgInfo;
+
+            vkUpdateDescriptorSets(pipeline.GetDevice(), 2, writes, 0, nullptr);
+        }
+
+        // -- Update UBO data (display rotation) --
+        CameraBgUniformBuffer data{};
+        data.displayRotation = *displayRotation;
+        memcpy(ub->mappedData.Current(), &data, sizeof(data));
+        vmaFlushAllocation(pipeline.GetAllocator(),
+                           ub->gpuBufferAllocation.Current(),
+                           0, sizeof(data));
+
+        // -- Bind and draw --
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipeline.GetPipelineLayout(), 0, 1,
+                                &ub->descriptorSets.Current(), 0, nullptr);
+
+        StaticMesh* mesh = obj->GetMesh();
+        assert(mesh != nullptr);
+        VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(cmd, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, mesh->GetIndexCount(), 1, 0, 0, 0);
+
+        ub->deathCounter++;
+        ub->gpuBuffer.Next();
+        ub->gpuBufferAllocation.Next();
+        ub->mappedData.Next();
+        ub->descriptorSets.Next();
+    };
+
     return config;
 }
 

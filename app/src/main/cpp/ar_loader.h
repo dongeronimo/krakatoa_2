@@ -112,6 +112,19 @@ namespace ar {
 
             LOAD_ARCORE_FUNC(ArSession_setCameraTextureName);
 
+            // Camera config selection
+            LOAD_ARCORE_FUNC(ArCameraConfigList_create);
+            LOAD_ARCORE_FUNC(ArCameraConfigList_destroy);
+            LOAD_ARCORE_FUNC(ArCameraConfigList_getSize);
+            LOAD_ARCORE_FUNC(ArCameraConfigList_getItem);
+            LOAD_ARCORE_FUNC(ArCameraConfig_create);
+            LOAD_ARCORE_FUNC(ArCameraConfig_destroy);
+            LOAD_ARCORE_FUNC(ArCameraConfig_getImageDimensions);
+            LOAD_ARCORE_FUNC(ArCameraConfigFilter_create);
+            LOAD_ARCORE_FUNC(ArCameraConfigFilter_destroy);
+            LOAD_ARCORE_FUNC(ArSession_getSupportedCameraConfigsWithFilter);
+            LOAD_ARCORE_FUNC(ArSession_setCameraConfig);
+
 #undef LOAD_ARCORE_FUNC
 
             LOGI("ARCore library loaded successfully");
@@ -212,6 +225,35 @@ namespace ar {
                                       ArPose* out_pose) = nullptr;
 
         void (*ArSession_setCameraTextureName)(ArSession* session, uint32_t texture_id) = nullptr;
+
+        // ── Camera config selection ──
+        void (*ArCameraConfigList_create)(const ArSession* session,
+                                          ArCameraConfigList** out_list) = nullptr;
+        void (*ArCameraConfigList_destroy)(ArCameraConfigList* list) = nullptr;
+        void (*ArCameraConfigList_getSize)(const ArSession* session,
+                                           const ArCameraConfigList* list,
+                                           int32_t* out_size) = nullptr;
+        void (*ArCameraConfigList_getItem)(const ArSession* session,
+                                           const ArCameraConfigList* list,
+                                           int32_t index,
+                                           ArCameraConfig* out_camera_config) = nullptr;
+        void (*ArCameraConfig_create)(const ArSession* session,
+                                      ArCameraConfig** out_camera_config) = nullptr;
+        void (*ArCameraConfig_destroy)(ArCameraConfig* camera_config) = nullptr;
+        void (*ArCameraConfig_getImageDimensions)(const ArSession* session,
+                                                   const ArCameraConfig* camera_config,
+                                                   int32_t* out_width,
+                                                   int32_t* out_height) = nullptr;
+        void (*ArCameraConfigFilter_create)(const ArSession* session,
+                                            ArCameraConfigFilter** out_filter) = nullptr;
+        void (*ArCameraConfigFilter_destroy)(ArCameraConfigFilter* filter) = nullptr;
+        void (*ArSession_getSupportedCameraConfigsWithFilter)(
+                const ArSession* session,
+                const ArCameraConfigFilter* filter,
+                ArCameraConfigList* list) = nullptr;
+        ArStatus (*ArSession_setCameraConfig)(const ArSession* session,
+                                              const ArCameraConfig* camera_config) = nullptr;
+
     private:
         ARCoreLoader() = default;
         void* handle_ = nullptr;
