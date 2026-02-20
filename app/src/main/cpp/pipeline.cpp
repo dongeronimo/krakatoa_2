@@ -134,7 +134,7 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 pipeline.GetPipelineLayout(), 0, 1,
                                 &uniformBuffer->descriptorSets.Current(), 0, nullptr);
-        StaticMesh* mesh = obj->GetMesh();
+        Mesh* mesh = obj->GetMesh();
         assert(mesh != nullptr);
         VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
         VkDeviceSize offsets[] = {0};
@@ -354,7 +354,7 @@ PipelineConfig graphics::CameraBackgroundConfig(ARCameraImage* cameraImage,
                                 pipeline.GetPipelineLayout(), 0, 1,
                                 &ub->descriptorSets.Current(), 0, nullptr);
 
-        StaticMesh* mesh = obj->GetMesh();
+        Mesh* mesh = obj->GetMesh();
         assert(mesh != nullptr);
         VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
         VkDeviceSize offsets[] = {0};

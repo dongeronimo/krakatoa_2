@@ -25,6 +25,7 @@
 #include "egl_dummy_context.h"
 #include "offscreen_render_pass.h"
 #include "ar_camera_image.h"
+#include "mesh.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
@@ -34,7 +35,7 @@ std::unordered_map<std::string, VkPipelineLayout> pipelineLayouts;
 std::unordered_map<std::string, VkDescriptorSetLayout> descriptorSetLayouts;
 std::unique_ptr<graphics::CommandPoolManager> gCommandPoolManager = nullptr;
 std::unique_ptr<graphics::FrameSync> gFrameSync = nullptr;
-std::unordered_map<std::string, std::unique_ptr<graphics::StaticMesh>> gStaticMeshes;
+std::unordered_map<std::string, std::unique_ptr<graphics::Mesh>> gMeshes;
 std::unique_ptr<graphics::FrameTimer> gFrameTimer = nullptr;
 std::unique_ptr<ar::ARSessionManager> gArSessionManager = nullptr;
 std::unique_ptr<graphics::ARCameraImage> gCameraImage = nullptr;
@@ -112,7 +113,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
         io::MeshLoader meshLoader;
         auto meshData = meshLoader.Load("meshes/cube.glb");
         if (!meshData.vertices.empty() && !meshData.indices.empty()) {
-            gStaticMeshes["cube"] = std::make_unique<graphics::StaticMesh>(
+            gMeshes["cube"] = std::make_unique<graphics::StaticMesh>(
                     gVkContext->GetDevice(),
                     gVkContext->GetAllocator(),
                     *gCommandPoolManager,
@@ -123,7 +124,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                     "cube");
         }
         auto quadData = io::MeshLoader::CreateFullscreenQuad();
-        gStaticMeshes["fullscreen_quad"] = std::make_unique<graphics::StaticMesh>(
+        gMeshes["fullscreen_quad"] = std::make_unique<graphics::StaticMesh>(
                 gVkContext->GetDevice(),
                 gVkContext->GetAllocator(),
                 *gCommandPoolManager,
@@ -134,8 +135,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                 "fullscreen_quad");
     }
     //load the meshes
-    cube.SetMesh(gStaticMeshes["cube"].get());
-    cameraBgQuad.SetMesh(gStaticMeshes["fullscreen_quad"].get());
+    cube.SetMesh(gMeshes["cube"].get());
+    cameraBgQuad.SetMesh(gMeshes["fullscreen_quad"].get());
     //create the frame timer
     gFrameTimer = std::make_unique<graphics::FrameTimer>();
     //dummy egl context to deal with ar session bullshit
@@ -189,7 +190,7 @@ JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceDestroyed(JNIEnv *env,
                                                                                       jobject thiz) {
     vkDeviceWaitIdle(gVkContext->GetDevice());
-    gStaticMeshes.clear();
+    gMeshes.clear();
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -295,7 +296,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     vkDeviceWaitIdle(gVkContext->GetDevice());
     gCameraImage = nullptr;
     gArSessionManager.release();
-    gStaticMeshes.clear();
+    gMeshes.clear();
     for (const auto& [key, value] : descriptorSetLayouts) {
         vkDestroyDescriptorSetLayout(gVkContext->GetDevice(), value, nullptr);
     }

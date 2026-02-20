@@ -112,6 +112,11 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         egl_dummy_context.h
         ar_camera_image.cpp
         ar_camera_image.h
+        ar_plane.cpp
+        ar_plane.h
+        mutable_mesh.cpp
+        mutable_mesh.h
+        mesh.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore

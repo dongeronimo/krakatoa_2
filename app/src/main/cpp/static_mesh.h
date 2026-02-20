@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include "mesh.h"
 namespace graphics {
     class CommandPoolManager;
 
@@ -14,7 +15,7 @@ namespace graphics {
      *
      * Vertex format: px py pz nx ny nz u v (8 floats, 32 bytes per vertex).
      */
-    class StaticMesh {
+    class StaticMesh : public Mesh{
     public:
         /**
          * Create a static mesh and upload data to GPU.
