@@ -170,3 +170,4 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
             COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
     )
 endif()
+

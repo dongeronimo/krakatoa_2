@@ -8,7 +8,8 @@ namespace graphics {
     class CommandPoolManager;
     class MutableMesh : public Mesh {
     public:
-        MutableMesh(VkDevice device, VmaAllocator allocator, CommandPoolManager& cmdManager,
+        MutableMesh(VkDevice device, VmaAllocator allocator,
+                    CommandPoolManager& cmdManager,
                     const std::string& name = "");
         ~MutableMesh();
         /**

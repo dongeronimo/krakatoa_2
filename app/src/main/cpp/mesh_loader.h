@@ -14,7 +14,9 @@ namespace io {
         uint32_t vertexCount = 0;
         uint32_t indexCount = 0;
     };
-
+    std::shared_ptr<MeshData> GenerateARPlaneMesh(const float* polygonXZ,
+                                                int floatCount,
+                                                float uvScale);
     /**
      * Loads mesh data from GLTF files using Assimp.
      *

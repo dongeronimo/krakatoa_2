@@ -26,6 +26,9 @@
 #include "offscreen_render_pass.h"
 #include "ar_camera_image.h"
 #include "mesh.h"
+#include "mutable_mesh.h"
+#include "concatenate.h"
+#include <glm/gtc/type_ptr.hpp>
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
@@ -44,6 +47,7 @@ ar::EglDummyContext m_eglDummy;
 int gDisplayRotation = 0;
 graphics::Renderable cube("cube");
 graphics::Renderable cameraBgQuad("camera_bg");
+std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -196,16 +200,22 @@ extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(JNIEnv *env,
                                                                                jobject thiz) {
+
+    gFrameSync->WaitForCurrentFrame();
+
     gFrameTimer->Tick();
     gFrameSync->AdvanceFrame();
+    VkSemaphore acquireSem = gFrameSync->GetNextAcquireSemaphore();
     gCommandPoolManager->AdvanceFrame();
     gCameraImage->AdvanceFrame();
+    for(auto p:gArPlanes){
+        //std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
+        ((graphics::MutableMesh*)p.second->GetMesh())->Advance();
+    }
     // Update ARCore first - acquires CPU camera image (YUV planes)
     m_eglDummy.makeCurrent();
     gArSessionManager->onDrawFrame();
-    gFrameSync->WaitForCurrentFrame();
 
-    VkSemaphore acquireSem = gFrameSync->GetNextAcquireSemaphore();
     uint32_t imageIndex;
     vkAcquireNextImageKHR(gVkContext->GetDevice(), gVkContext->GetSwapchain(),
                           UINT64_MAX, acquireSem, VK_NULL_HANDLE, &imageIndex);
@@ -217,16 +227,48 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gCommandPoolManager->BeginFrame();
     VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
     const uint32_t frameIndex = gVkContext->GetFrameIndex();
+    // Update AR planes
+    gArSessionManager->forEachPlane([&](int64_t planeid, const float* modelMat,
+            const float* polygon, int polyFloatCount){
+        // Generate the mesh from the polygon contour (centroid fan)
+        auto meshData = io::GenerateARPlaneMesh(polygon, polyFloatCount, 1.0f);
+        // nothing, leave this functions
+        if (meshData->indices.empty())
+            return;
+        //TODO: Seek renderables by plane id
+        auto itPlanes = gArPlanes.find(planeid);
+        if(itPlanes == gArPlanes.end()) {
+            //no plane with this id, create a new renderable, with a new mutable mesh and add to the plane.
+            auto name = Concatenate("AR_PLANE ", planeid);
+            std::shared_ptr<graphics::Renderable> newRenderable = std::make_shared<graphics::Renderable>(planeid);
+            graphics::MutableMesh* newMesh = new graphics::MutableMesh(gVkContext->GetDevice(),
+                                                                       gVkContext->GetAllocator(),
+                                                                       *(gCommandPoolManager.get()),
+                                                                       name);
+            newRenderable->SetMesh(newMesh, true);
+            gArPlanes.insert({planeid, newRenderable});
+        }
+        auto planeRenderable = gArPlanes[planeid];
+        //TODO: update the mutable mesh
+        auto mutableMesh = reinterpret_cast<graphics::MutableMesh*>(planeRenderable->GetMesh());
+        mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
+        //TODO: update the model transform of the renderable
+        planeRenderable->GetTransform().SetFromMatrixPtr(modelMat);
+
+        //Unlike the original function i wrote the dra w is decoupled from the assembly
+        //and data gathering phases, so the drawing will happen later, when i have render passes
+        //and pipelines
+    });
     // Upload camera feed (YUV->RGBA) into the ring-buffered Vulkan image.
     // After this call the current image is in SHADER_READ_ONLY_OPTIMAL, ready to sample.
     gCameraImage->Update(cmd, gArSessionManager->getCameraFrame());
     ////////////////////// Update objects data /////////////////////////////////////////////////////
     //Set camera
-    glm::vec3 cameraPos = {3.0f, 5.0f, 7.0f};
-    glm::mat4 view = glm::lookAt(cameraPos, glm::vec3(0,0,0), glm::vec3(0,1,0));
-    glm::mat4 proj = glm::perspective(glm::radians(45.0f),
-                                      gSwapChainRenderPass->GetExtent().width/(float)gSwapChainRenderPass->GetExtent().height,
-                                      0.1f, 100.0f);
+    //glm::vec3 cameraPos = {3.0f, 5.0f, 7.0f};
+    //glm::mat4 view = glm::lookAt(cameraPos, glm::vec3(0,0,0), glm::vec3(0,1,0));
+    //glm::mat4 proj = glm::perspective(glm::radians(45.0f),
+    //                                  gSwapChainRenderPass->GetExtent().width/(float)gSwapChainRenderPass->GetExtent().height,
+    //                                  0.1f, 100.0f);
     float dt = gFrameTimer->GetDeltaTime();
     cube.GetTransform().Rotate(glm::vec3(0, 45.0f * dt, 0));
     ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -236,14 +278,37 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gOffscreenRenderPass->AdvanceFrame();
     gOffscreenRenderPass->Begin(cmd, gOffscreenRenderPass->GetFramebuffer(), gOffscreenRenderPass->GetExtent());
     // Fill RDO for the cube
-    graphics::RDO rdo;
-    rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
-    rdo.Add(graphics::RDO::Keys::MODEL_MAT, cube.GetTransform().GetWorldMatrix());
-    rdo.Add(graphics::RDO::Keys::VIEW_MAT, view);
-    rdo.Add(graphics::RDO::Keys::PROJ_MAT, proj);
+    //TODO: For each plane, draw it
+    for (auto plane:gArPlanes)
+    {
+        //TODO: Fill the RDO
+        graphics::RDO rdo;
+        rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
+        rdo.Add(graphics::RDO::Keys::MODEL_MAT, cube.GetTransform().GetWorldMatrix());
+        //TODO: Get view matrix from AR
+        std::array<float,16> arViewMatrix{};
+        gArSessionManager->getViewMatrix(arViewMatrix.data());
+        glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
+        rdo.Add(graphics::RDO::Keys::VIEW_MAT, viewMat);
+        //TODO: Get proj matrix from AR
+        std::array<float,16> arProjMatrix{};
+        gArSessionManager->getProjectionMatrix(0.01f, 100.f, arProjMatrix.data());
+        glm::mat4 projMat = glm::make_mat4(arProjMatrix.data());
+        rdo.Add(graphics::RDO::Keys::PROJ_MAT, projMat);
+        //TODO: Bind the pipeline
+        gUnshadedOpaquePipeline->Bind(cmd);
+        //TODO: Draw
+        gUnshadedOpaquePipeline->Draw(cmd, &rdo, plane.second.get(), frameIndex);
+    }
+    //TODO: Remove the cube, it served it's proposes
+//    graphics::RDO rdo;
+//    rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
+//    rdo.Add(graphics::RDO::Keys::MODEL_MAT, cube.GetTransform().GetWorldMatrix());
+//    rdo.Add(graphics::RDO::Keys::VIEW_MAT, view);
+//    rdo.Add(graphics::RDO::Keys::PROJ_MAT, proj);
     // Draw the cube using the unshaded pipeline.
-    gUnshadedOpaquePipeline->Bind(cmd);
-    gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube, frameIndex);
+//    gUnshadedOpaquePipeline->Bind(cmd);
+//    gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube, frameIndex);
     gOffscreenRenderPass->End(cmd);
     //begin the swap chain render pass
     gSwapChainRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
