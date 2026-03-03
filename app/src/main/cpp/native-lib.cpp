@@ -45,8 +45,8 @@ std::unique_ptr<graphics::ARCameraImage> gCameraImage = nullptr;
 //dummy egl context do deal with arcore bullshit. use it before getting each ar frame.
 ar::EglDummyContext m_eglDummy;
 int gDisplayRotation = 0;
-graphics::Renderable cube("cube");
-graphics::Renderable cameraBgQuad("camera_bg");
+std::unique_ptr<graphics::Renderable> cameraBgQuad = nullptr;
+//graphics::Renderable cameraBgQuad("camera_bg");
 std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
@@ -139,8 +139,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                 "fullscreen_quad");
     }
     //load the meshes
-    cube.SetMesh(gMeshes["cube"].get());
-    cameraBgQuad.SetMesh(gMeshes["fullscreen_quad"].get());
+    //cube.SetMesh(gMeshes["cube"].get());
+    cameraBgQuad = std::make_unique<graphics::Renderable>("camera_bg");
+    cameraBgQuad->SetMesh(gMeshes["fullscreen_quad"].get());
     //create the frame timer
     gFrameTimer = std::make_unique<graphics::FrameTimer>();
     //dummy egl context to deal with ar session bullshit
@@ -235,6 +236,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         // nothing, leave this functions
         if (meshData->indices.empty())
             return;
+        assert(meshData->indexCount > 0);
+        assert(meshData->vertexCount > 0);
         //TODO: Seek renderables by plane id
         auto itPlanes = gArPlanes.find(planeid);
         if(itPlanes == gArPlanes.end()) {
@@ -269,8 +272,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     //glm::mat4 proj = glm::perspective(glm::radians(45.0f),
     //                                  gSwapChainRenderPass->GetExtent().width/(float)gSwapChainRenderPass->GetExtent().height,
     //                                  0.1f, 100.0f);
-    float dt = gFrameTimer->GetDeltaTime();
-    cube.GetTransform().Rotate(glm::vec3(0, 45.0f * dt, 0));
+    //float dt = gFrameTimer->GetDeltaTime();
+    //cube.GetTransform().Rotate(glm::vec3(0, 45.0f * dt, 0));
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
     //begin the offscreen render pass
@@ -284,7 +287,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         //TODO: Fill the RDO
         graphics::RDO rdo;
         rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
-        rdo.Add(graphics::RDO::Keys::MODEL_MAT, cube.GetTransform().GetWorldMatrix());
+        rdo.Add(graphics::RDO::Keys::MODEL_MAT, plane.second->GetTransform().GetWorldMatrix());
         //TODO: Get view matrix from AR
         std::array<float,16> arViewMatrix{};
         gArSessionManager->getViewMatrix(arViewMatrix.data());
@@ -318,7 +321,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     // Draw camera background (fullscreen quad with camera texture, depth=1.0)
     if (gCameraImage->IsValid()) {
         gCameraBgPipeline->Bind(cmd);
-        gCameraBgPipeline->Draw(cmd, nullptr, &cameraBgQuad, frameIndex);
+        gCameraBgPipeline->Draw(cmd, nullptr, cameraBgQuad.get(), frameIndex);
     }
     gSwapChainRenderPass->End(cmd);
     gCommandPoolManager->EndFrame();

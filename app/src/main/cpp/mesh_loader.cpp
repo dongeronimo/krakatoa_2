@@ -169,6 +169,8 @@ std::shared_ptr<MeshData> io::GenerateARPlaneMesh(const float* polygonXZ,
         result->indices.push_back(static_cast<uint32_t>(i + 1));   // current
         result->indices.push_back(static_cast<uint32_t>((i + 1) % vertexCount + 1)); // next (wraps)
     }
+    result->vertexCount = static_cast<uint32_t>(result->vertices.size() / 8); // 8 floats per vertex
+    result->indexCount  = static_cast<uint32_t>(result->indices.size());
     return result;
 }
 
