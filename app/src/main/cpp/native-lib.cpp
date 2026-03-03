@@ -301,7 +301,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gCameraImage->Update(cmd, gArSessionManager->getCameraFrame());
 
     //begin the offscreen render pass
-    gOffscreenRenderPass->setClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    gOffscreenRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     gOffscreenRenderPass->AdvanceFrame();
     gOffscreenRenderPass->Begin(cmd, gOffscreenRenderPass->GetFramebuffer(), gOffscreenRenderPass->GetExtent());
     // Fill RDO for the cube
