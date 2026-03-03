@@ -10,6 +10,7 @@
 #include "rdo.h"
 #include "concatenate.h"
 #include "ar_camera_image.h"
+#include "offscreen_render_pass.h"
 #include <glm/gtc/type_ptr.hpp>
 using namespace graphics;
 
@@ -370,6 +371,121 @@ PipelineConfig graphics::CameraBackgroundConfig(ARCameraImage* cameraImage,
         ub->gpuBuffer.Next();
         ub->gpuBufferAllocation.Next();
         ub->mappedData.Next();
+        ub->descriptorSets.Next();
+    };
+
+    return config;
+}
+
+// ============================================================
+// Offscreen composite
+// ============================================================
+
+struct OffscreenCompositeState {
+    VkSampler sampler = VK_NULL_HANDLE;
+    VkDevice  device  = VK_NULL_HANDLE;
+
+    ~OffscreenCompositeState() {
+        if (sampler != VK_NULL_HANDLE) {
+            vkDestroySampler(device, sampler, nullptr);
+            LOGI("OffscreenCompositeState: sampler destroyed");
+        }
+    }
+};
+
+PipelineConfig graphics::OffscreenCompositeConfig(OffscreenRenderPass* offscreenPass) {
+    PipelineConfig config;
+    config.vertexShader   = "offscreen_composite.vert";
+    config.fragmentShader = "offscreen_composite.frag";
+
+    config.depthTestEnable  = false;
+    config.depthWriteEnable = false;
+
+    config.blendEnable          = true;
+    config.srcColorBlendFactor  = VK_BLEND_FACTOR_SRC_ALPHA;
+    config.dstColorBlendFactor  = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    config.colorBlendOp         = VK_BLEND_OP_ADD;
+    config.srcAlphaBlendFactor  = VK_BLEND_FACTOR_ONE;
+    config.dstAlphaBlendFactor  = VK_BLEND_FACTOR_ZERO;
+    config.alphaBlendOp         = VK_BLEND_OP_ADD;
+    config.cullMode = VK_CULL_MODE_NONE;
+
+    config.descriptorPoolSizes = {
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_DESCRIPTOR_SETS_PER_POOL}
+    };
+
+    auto state = std::make_shared<OffscreenCompositeState>();
+
+    config.renderCallback = [offscreenPass, state](
+            VkCommandBuffer cmd, RDO* /*rdo*/, Renderable* obj,
+            Pipeline& pipeline, uint32_t frameIndex) {
+
+        // -- First-time init: create sampler and descriptor sets --
+        std::shared_ptr<UniformBuffer> ub = pipeline.GetUniformBuffer(obj->GetId());
+        if (ub == nullptr) {
+            state->device = pipeline.GetDevice();
+
+            VkSamplerCreateInfo samplerInfo{};
+            samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerInfo.magFilter    = VK_FILTER_LINEAR;
+            samplerInfo.minFilter    = VK_FILTER_LINEAR;
+            samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            VkResult r = vkCreateSampler(pipeline.GetDevice(), &samplerInfo,
+                                         nullptr, &state->sampler);
+            assert(r == VK_SUCCESS);
+
+            ub = std::make_shared<UniformBuffer>();
+            ub->size = 0;
+            ub->id   = obj->GetId();
+            ub->deathCounter = 100;
+
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                ub->descriptorSets.Next() = pipeline.AllocateDescriptorSet();
+            }
+
+            pipeline.AddUniformBuffer(obj->GetId(), ub);
+
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                debug::SetDescriptorSetName(pipeline.GetDevice(), ub->descriptorSets[i],
+                                            Concatenate("OffscreenCompositeDescSet[", i, "]"));
+            }
+        }
+
+        // -- Every frame: bind the current offscreen color image --
+        {
+            VkDescriptorImageInfo imgInfo{};
+            imgInfo.sampler     = state->sampler;
+            imgInfo.imageView   = offscreenPass->GetColorImageView();
+            imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkWriteDescriptorSet write{};
+            write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet          = ub->descriptorSets.Current();
+            write.dstBinding      = 0;
+            write.descriptorCount = 1;
+            write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.pImageInfo      = &imgInfo;
+
+            vkUpdateDescriptorSets(pipeline.GetDevice(), 1, &write, 0, nullptr);
+        }
+
+        // -- Bind and draw --
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipeline.GetPipelineLayout(), 0, 1,
+                                &ub->descriptorSets.Current(), 0, nullptr);
+
+        Mesh* mesh = obj->GetMesh();
+        assert(mesh != nullptr);
+        VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(cmd, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, mesh->GetIndexCount(), 1, 0, 0, 0);
+
+        ub->deathCounter++;
         ub->descriptorSets.Next();
     };
 

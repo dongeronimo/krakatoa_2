@@ -14,6 +14,7 @@ namespace graphics {
     class RenderPass;
     class Pipeline;
     class ARCameraImage;
+    class OffscreenRenderPass;
 
     /**
      * Configuration for the variable parts of a graphics pipeline.
@@ -103,6 +104,15 @@ namespace graphics {
      */
     PipelineConfig CameraBackgroundConfig(ARCameraImage* cameraImage,
                                           const int* displayRotation);
+
+    /**
+     * Offscreen composite: alpha-blends the offscreen render target onto the
+     * swapchain as a fullscreen quad.  No depth test, standard alpha blending.
+     *
+     * @param offscreenPass  pointer to the OffscreenRenderPass whose color
+     *                       attachment will be sampled each frame
+     */
+    PipelineConfig OffscreenCompositeConfig(OffscreenRenderPass* offscreenPass);
 
     /**
      * A Vulkan graphics pipeline built from a PipelineConfig.
