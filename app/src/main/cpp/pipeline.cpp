@@ -148,6 +148,7 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
         // Advance buffers and increment the keepalive
         uniformBuffer->deathCounter++;
         uniformBuffer->gpuBuffer.Next();
+        uniformBuffer->gpuBufferAllocation.Next();
         uniformBuffer->mappedData.Next();
         uniformBuffer->descriptorSets.Next();
     };
@@ -599,6 +600,9 @@ void Pipeline::Bind(VkCommandBuffer cmd) const {
 
 void Pipeline::Draw(VkCommandBuffer cmd, RDO *rdo, Renderable *renderable, uint32_t frameIndex) {
     renderCallback(cmd, rdo, renderable, *this, frameIndex);
+}
+
+void Pipeline::CollectGarbage() {
     DecreaseDeathCounter();
 }
 

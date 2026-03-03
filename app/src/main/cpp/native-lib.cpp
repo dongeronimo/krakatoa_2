@@ -204,6 +204,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
 
     gFrameSync->WaitForCurrentFrame();
 
+    // Garbage-collect unused uniform buffers AFTER the fence wait
+    // (GPU is done with old frames) and BEFORE command recording
+    // (so we never destroy buffers that are bound to the current CB).
+    if (gUnshadedOpaquePipeline) gUnshadedOpaquePipeline->CollectGarbage();
+    if (gCameraBgPipeline)       gCameraBgPipeline->CollectGarbage();
+
     gFrameTimer->Tick();
     gFrameSync->AdvanceFrame();
     VkSemaphore acquireSem = gFrameSync->GetNextAcquireSemaphore();

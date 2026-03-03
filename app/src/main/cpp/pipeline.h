@@ -139,6 +139,13 @@ namespace graphics {
          * */
         void Draw(VkCommandBuffer cmd, RDO* rdo, Renderable* renderable,
                   uint32_t frameIndex);
+        /**
+         * Run once per frame (outside render passes) to destroy uniform
+         * buffers whose objects haven't been drawn for a while.
+         * Must NOT be called during command-buffer recording because it
+         * may vmaDestroyBuffer resources that are bound to the CB.
+         */
+        void CollectGarbage();
         VkPipeline GetPipeline() const { return pipeline; }
         VkDevice GetDevice() const {return device;}
         VmaAllocator GetAllocator()const {return allocator;}
