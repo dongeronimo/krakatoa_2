@@ -136,7 +136,10 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
                                 &uniformBuffer->descriptorSets.Current(), 0, nullptr);
         Mesh* mesh = obj->GetMesh();
         assert(mesh != nullptr);
-        VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
+        auto vb = mesh->GetVertexBuffer();
+        assert(vb != nullptr);
+        VkBuffer vertexBuffers[] = {vb};
+
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
         vkCmdBindIndexBuffer(cmd, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);

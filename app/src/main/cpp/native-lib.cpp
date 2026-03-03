@@ -250,6 +250,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                                                                        name);
             newRenderable->SetMesh(newMesh, true);
             gArPlanes.insert({planeid, newRenderable});
+            newMesh->Advance();
         }
         auto planeRenderable = gArPlanes[planeid];
         //TODO: update the mutable mesh
