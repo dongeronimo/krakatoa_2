@@ -244,11 +244,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
             return;
         assert(meshData->indexCount > 0);
         assert(meshData->vertexCount > 0);
-        //TODO: Seek renderables by plane id
+        // Seek renderables by plane id
         auto itPlanes = gArPlanes.find(planeid);
         bool isNewPlane = (itPlanes == gArPlanes.end());
         if(isNewPlane)
         {
+            LOGI("[PLANES] Creating plane %ld", planeid);
             //no plane with this id, create a new renderable, with a new mutable mesh and add to the plane.
             auto name = Concatenate("AR_PLANE ", planeid);
             std::shared_ptr<graphics::Renderable> newRenderable = std::make_shared<graphics::Renderable>(planeid);
@@ -264,6 +265,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         }
         else
         {
+            LOGI("[PLANES] Updating plane %ld", planeid);
             auto planeRenderable = gArPlanes[planeid];
             auto mutableMesh = reinterpret_cast<graphics::MutableMesh*>(planeRenderable->GetMesh());
             mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
@@ -276,16 +278,6 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     // Upload camera feed (YUV->RGBA) into the ring-buffered Vulkan image.
     // After this call the current image is in SHADER_READ_ONLY_OPTIMAL, ready to sample.
     gCameraImage->Update(cmd, gArSessionManager->getCameraFrame());
-    ////////////////////// Update objects data /////////////////////////////////////////////////////
-    //Set camera
-    //glm::vec3 cameraPos = {3.0f, 5.0f, 7.0f};
-    //glm::mat4 view = glm::lookAt(cameraPos, glm::vec3(0,0,0), glm::vec3(0,1,0));
-    //glm::mat4 proj = glm::perspective(glm::radians(45.0f),
-    //                                  gSwapChainRenderPass->GetExtent().width/(float)gSwapChainRenderPass->GetExtent().height,
-    //                                  0.1f, 100.0f);
-    //float dt = gFrameTimer->GetDeltaTime();
-    //cube.GetTransform().Rotate(glm::vec3(0, 45.0f * dt, 0));
-    ////////////////////////////////////////////////////////////////////////////////////////////////
 
     //begin the offscreen render pass
     gOffscreenRenderPass->setClearColor(1.0f, 1.0f, 1.0f, 1.0f);
@@ -314,15 +306,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         //TODO: Draw
         gUnshadedOpaquePipeline->Draw(cmd, &rdo, plane.second.get(), frameIndex);
     }
-    //TODO: Remove the cube, it served it's proposes
-//    graphics::RDO rdo;
-//    rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
-//    rdo.Add(graphics::RDO::Keys::MODEL_MAT, cube.GetTransform().GetWorldMatrix());
-//    rdo.Add(graphics::RDO::Keys::VIEW_MAT, view);
-//    rdo.Add(graphics::RDO::Keys::PROJ_MAT, proj);
-    // Draw the cube using the unshaded pipeline.
-//    gUnshadedOpaquePipeline->Bind(cmd);
-//    gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube, frameIndex);
+    // End the offscreen render pass
     gOffscreenRenderPass->End(cmd);
     //begin the swap chain render pass
     gSwapChainRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -334,6 +318,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         gCameraBgPipeline->Bind(cmd);
         gCameraBgPipeline->Draw(cmd, nullptr, cameraBgQuad.get(), frameIndex);
     }
+    // TODO: Draw the result of the offscreen render pass
     gSwapChainRenderPass->End(cmd);
     gCommandPoolManager->EndFrame();
 
