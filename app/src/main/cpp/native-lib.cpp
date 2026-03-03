@@ -34,6 +34,7 @@ std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
 std::unique_ptr<graphics::Pipeline> gUnshadedOpaquePipeline = nullptr;
 std::unique_ptr<graphics::Pipeline> gCameraBgPipeline = nullptr;
+std::unique_ptr<graphics::Pipeline> gOffscreenCompositePipeline = nullptr;
 std::unordered_map<std::string, VkPipelineLayout> pipelineLayouts;
 std::unordered_map<std::string, VkDescriptorSetLayout> descriptorSetLayouts;
 std::unique_ptr<graphics::CommandPoolManager> gCommandPoolManager = nullptr;
@@ -46,6 +47,7 @@ std::unique_ptr<graphics::ARCameraImage> gCameraImage = nullptr;
 ar::EglDummyContext m_eglDummy;
 int gDisplayRotation = 0;
 std::unique_ptr<graphics::Renderable> cameraBgQuad = nullptr;
+std::unique_ptr<graphics::Renderable> compositeQuad = nullptr;
 //graphics::Renderable cameraBgQuad("camera_bg");
 std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
 extern "C" JNIEXPORT jstring JNICALL
@@ -103,6 +105,15 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .AddDescriptorSetLayout(cameraBgDescriptorSetLayout)
             .Build();
     pipelineLayouts.insert({"camera_bg", cameraBgPipelineLayout});
+    // Offscreen composite: single combined image sampler for the offscreen color attachment
+    auto offscreenCompositeDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
+            .AddBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .Build();
+    descriptorSetLayouts.insert({"offscreen_composite", offscreenCompositeDescriptorSetLayout});
+    auto offscreenCompositePipelineLayout = graphics::PipelineLayoutBuilder(gVkContext->GetDevice())
+            .AddDescriptorSetLayout(offscreenCompositeDescriptorSetLayout)
+            .Build();
+    pipelineLayouts.insert({"offscreen_composite", offscreenCompositePipelineLayout});
     ANativeWindow_release(window);
     //Creates the command pool manager
     gCommandPoolManager = std::make_unique<graphics::CommandPoolManager>(gVkContext->GetDevice(),
@@ -142,6 +153,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     //cube.SetMesh(gMeshes["cube"].get());
     cameraBgQuad = std::make_unique<graphics::Renderable>("camera_bg");
     cameraBgQuad->SetMesh(gMeshes["fullscreen_quad"].get());
+    compositeQuad = std::make_unique<graphics::Renderable>("offscreen_composite");
+    compositeQuad->SetMesh(gMeshes["fullscreen_quad"].get());
     //create the frame timer
     gFrameTimer = std::make_unique<graphics::FrameTimer>();
     //dummy egl context to deal with ar session bullshit
@@ -188,6 +201,13 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                                       &gDisplayRotation),
                                                               pipelineLayouts["camera_bg"],
                                                               descriptorSetLayouts["camera_bg"]);
+    gOffscreenCompositePipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
+                                                              gVkContext->GetDevice(),
+                                                              gVkContext->GetAllocator(),
+                                                              graphics::OffscreenCompositeConfig(
+                                                                      gOffscreenRenderPass.get()),
+                                                              pipelineLayouts["offscreen_composite"],
+                                                              descriptorSetLayouts["offscreen_composite"]);
     gFrameSync->RecreateForSwapchain(gVkContext->getSwapchainImageCount());
 }
 extern "C"
@@ -203,6 +223,13 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                                                                                jobject thiz) {
 
     gFrameSync->WaitForCurrentFrame();
+
+    // Garbage-collect unused uniform buffers AFTER the fence wait
+    // (GPU is done with old frames) and BEFORE command recording
+    // (so we never destroy buffers that are bound to the current CB).
+    if (gUnshadedOpaquePipeline)       gUnshadedOpaquePipeline->CollectGarbage();
+    if (gCameraBgPipeline)             gCameraBgPipeline->CollectGarbage();
+    if (gOffscreenCompositePipeline)   gOffscreenCompositePipeline->CollectGarbage();
 
     gFrameTimer->Tick();
     gFrameSync->AdvanceFrame();
@@ -238,11 +265,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
             return;
         assert(meshData->indexCount > 0);
         assert(meshData->vertexCount > 0);
-        //TODO: Seek renderables by plane id
+        // Seek renderables by plane id
         auto itPlanes = gArPlanes.find(planeid);
         bool isNewPlane = (itPlanes == gArPlanes.end());
         if(isNewPlane)
         {
+            LOGI("[PLANES] Creating plane %ld", planeid);
             //no plane with this id, create a new renderable, with a new mutable mesh and add to the plane.
             auto name = Concatenate("AR_PLANE ", planeid);
             std::shared_ptr<graphics::Renderable> newRenderable = std::make_shared<graphics::Renderable>(planeid);
@@ -258,6 +286,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         }
         else
         {
+            LOGI("[PLANES] Updating plane %ld", planeid);
             auto planeRenderable = gArPlanes[planeid];
             auto mutableMesh = reinterpret_cast<graphics::MutableMesh*>(planeRenderable->GetMesh());
             mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
@@ -270,19 +299,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     // Upload camera feed (YUV->RGBA) into the ring-buffered Vulkan image.
     // After this call the current image is in SHADER_READ_ONLY_OPTIMAL, ready to sample.
     gCameraImage->Update(cmd, gArSessionManager->getCameraFrame());
-    ////////////////////// Update objects data /////////////////////////////////////////////////////
-    //Set camera
-    //glm::vec3 cameraPos = {3.0f, 5.0f, 7.0f};
-    //glm::mat4 view = glm::lookAt(cameraPos, glm::vec3(0,0,0), glm::vec3(0,1,0));
-    //glm::mat4 proj = glm::perspective(glm::radians(45.0f),
-    //                                  gSwapChainRenderPass->GetExtent().width/(float)gSwapChainRenderPass->GetExtent().height,
-    //                                  0.1f, 100.0f);
-    //float dt = gFrameTimer->GetDeltaTime();
-    //cube.GetTransform().Rotate(glm::vec3(0, 45.0f * dt, 0));
-    ////////////////////////////////////////////////////////////////////////////////////////////////
 
     //begin the offscreen render pass
-    gOffscreenRenderPass->setClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    gOffscreenRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     gOffscreenRenderPass->AdvanceFrame();
     gOffscreenRenderPass->Begin(cmd, gOffscreenRenderPass->GetFramebuffer(), gOffscreenRenderPass->GetExtent());
     // Fill RDO for the cube
@@ -302,21 +321,14 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         std::array<float,16> arProjMatrix{};
         gArSessionManager->getProjectionMatrix(0.01f, 100.f, arProjMatrix.data());
         glm::mat4 projMat = glm::make_mat4(arProjMatrix.data());
+        projMat[1][1] *= -1.0f; // ARCore gives OpenGL convention (Y-up); negate for Vulkan NDC (Y-down)
         rdo.Add(graphics::RDO::Keys::PROJ_MAT, projMat);
         //TODO: Bind the pipeline
         gUnshadedOpaquePipeline->Bind(cmd);
         //TODO: Draw
         gUnshadedOpaquePipeline->Draw(cmd, &rdo, plane.second.get(), frameIndex);
     }
-    //TODO: Remove the cube, it served it's proposes
-//    graphics::RDO rdo;
-//    rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
-//    rdo.Add(graphics::RDO::Keys::MODEL_MAT, cube.GetTransform().GetWorldMatrix());
-//    rdo.Add(graphics::RDO::Keys::VIEW_MAT, view);
-//    rdo.Add(graphics::RDO::Keys::PROJ_MAT, proj);
-    // Draw the cube using the unshaded pipeline.
-//    gUnshadedOpaquePipeline->Bind(cmd);
-//    gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube, frameIndex);
+    // End the offscreen render pass
     gOffscreenRenderPass->End(cmd);
     //begin the swap chain render pass
     gSwapChainRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -328,6 +340,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         gCameraBgPipeline->Bind(cmd);
         gCameraBgPipeline->Draw(cmd, nullptr, cameraBgQuad.get(), frameIndex);
     }
+    // Alpha-blend the offscreen render target (AR planes) on top of the camera
+    gOffscreenCompositePipeline->Bind(cmd);
+    gOffscreenCompositePipeline->Draw(cmd, nullptr, compositeQuad.get(), frameIndex);
     gSwapChainRenderPass->End(cmd);
     gCommandPoolManager->EndFrame();
 
@@ -378,6 +393,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     {
         vkDestroyPipelineLayout(gVkContext->GetDevice(), value, nullptr);
     }
+    gOffscreenCompositePipeline = nullptr;
     gCameraBgPipeline = nullptr;
     gUnshadedOpaquePipeline = nullptr;
     gCommandPoolManager = nullptr;

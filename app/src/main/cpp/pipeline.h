@@ -14,6 +14,7 @@ namespace graphics {
     class RenderPass;
     class Pipeline;
     class ARCameraImage;
+    class OffscreenRenderPass;
 
     /**
      * Configuration for the variable parts of a graphics pipeline.
@@ -105,6 +106,15 @@ namespace graphics {
                                           const int* displayRotation);
 
     /**
+     * Offscreen composite: alpha-blends the offscreen render target onto the
+     * swapchain as a fullscreen quad.  No depth test, standard alpha blending.
+     *
+     * @param offscreenPass  pointer to the OffscreenRenderPass whose color
+     *                       attachment will be sampled each frame
+     */
+    PipelineConfig OffscreenCompositeConfig(OffscreenRenderPass* offscreenPass);
+
+    /**
      * A Vulkan graphics pipeline built from a PipelineConfig.
      *
      * Fixed aspects: dynamic viewport/scissor, vertex layout (pos+normal+uv),
@@ -139,6 +149,13 @@ namespace graphics {
          * */
         void Draw(VkCommandBuffer cmd, RDO* rdo, Renderable* renderable,
                   uint32_t frameIndex);
+        /**
+         * Run once per frame (outside render passes) to destroy uniform
+         * buffers whose objects haven't been drawn for a while.
+         * Must NOT be called during command-buffer recording because it
+         * may vmaDestroyBuffer resources that are bound to the CB.
+         */
+        void CollectGarbage();
         VkPipeline GetPipeline() const { return pipeline; }
         VkDevice GetDevice() const {return device;}
         VmaAllocator GetAllocator()const {return allocator;}
