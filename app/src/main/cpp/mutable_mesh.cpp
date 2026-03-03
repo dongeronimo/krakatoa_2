@@ -68,6 +68,9 @@ void graphics::MutableMesh::UploadToCurrentSlot() {
     if(vertexBuffer.Current() != VK_NULL_HANDLE){
         vmaDestroyBuffer(allocator, vertexBuffer.Current(), vertexBufferAllocation.Current());
     }
+    if(indexBuffer.Current() != VK_NULL_HANDLE){
+        vmaDestroyBuffer(allocator, indexBuffer.Current(), indexBufferAllocation.Current());
+    }
     FillBuffer<float>(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                pendingVertices,
                vertexBufferAllocation.Current(),
@@ -76,6 +79,8 @@ void graphics::MutableMesh::UploadToCurrentSlot() {
                          pendingIndices,
                          indexBufferAllocation.Current(),
                          indexBuffer.Current());
+    vertexCount.Current() = static_cast<uint32_t>(pendingVertices.size() / 8);
+    indexCount.Current() = static_cast<uint32_t>(pendingIndices.size());
     SetObjectsNames();
 
 }
