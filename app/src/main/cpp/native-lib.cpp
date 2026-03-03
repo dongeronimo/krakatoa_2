@@ -321,6 +321,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         std::array<float,16> arProjMatrix{};
         gArSessionManager->getProjectionMatrix(0.01f, 100.f, arProjMatrix.data());
         glm::mat4 projMat = glm::make_mat4(arProjMatrix.data());
+        projMat[1][1] *= -1.0f; // ARCore gives OpenGL convention (Y-up); negate for Vulkan NDC (Y-down)
         rdo.Add(graphics::RDO::Keys::PROJ_MAT, projMat);
         //TODO: Bind the pipeline
         gUnshadedOpaquePipeline->Bind(cmd);

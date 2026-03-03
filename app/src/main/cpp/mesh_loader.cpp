@@ -164,14 +164,14 @@ std::shared_ptr<MeshData> io::GenerateARPlaneMesh(const float* polygonXZ,
         result->vertices.push_back(z * uvScale);
     }
     // Fan triangles from centroid to each edge.
-    // ARCore polygon vertices are CCW from above, but the projection
-    // matrix doesn't negate Y for Vulkan NDC, so screen-space winding
-    // is flipped.  Emit [centroid, next, current] so the triangles are
+    // ARCore polygon vertices are CCW from above.  The projection matrix
+    // has its Y negated for Vulkan NDC, which preserves the screen-space
+    // winding, so the original CCW order [centroid, current, next] is
     // front-facing with VK_FRONT_FACE_COUNTER_CLOCKWISE.
     for (int i = 0; i < vertexCount; i++) {
         result->indices.push_back(0);                              // centroid
-        result->indices.push_back(static_cast<uint32_t>((i + 1) % vertexCount + 1)); // next (wraps)
         result->indices.push_back(static_cast<uint32_t>(i + 1));   // current
+        result->indices.push_back(static_cast<uint32_t>((i + 1) % vertexCount + 1)); // next (wraps)
     }
     result->vertexCount = static_cast<uint32_t>(result->vertices.size() / 8); // 8 floats per vertex
     result->indexCount  = static_cast<uint32_t>(result->indices.size());
