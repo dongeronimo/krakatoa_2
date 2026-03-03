@@ -241,7 +241,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         //TODO: Seek renderables by plane id
         auto itPlanes = gArPlanes.find(planeid);
         bool isNewPlane = (itPlanes == gArPlanes.end());
-        if(isNewPlane) {
+        if(isNewPlane)
+        {
             //no plane with this id, create a new renderable, with a new mutable mesh and add to the plane.
             auto name = Concatenate("AR_PLANE ", planeid);
             std::shared_ptr<graphics::Renderable> newRenderable = std::make_shared<graphics::Renderable>(planeid);
@@ -251,18 +252,17 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                                                                        name);
             newRenderable->SetMesh(newMesh, true);
             gArPlanes.insert({planeid, newRenderable});
+            newMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
+            newMesh->Advance();
+            newRenderable->GetTransform().SetFromMatrixPtr(modelMat);
         }
-        auto planeRenderable = gArPlanes[planeid];
-        auto mutableMesh = reinterpret_cast<graphics::MutableMesh*>(planeRenderable->GetMesh());
-        mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
-        if(isNewPlane) {
-            // Advance after UpdateMesh so the pending data gets uploaded
-            // to the current slot before the first draw.
-            mutableMesh->Advance();
+        else
+        {
+            auto planeRenderable = gArPlanes[planeid];
+            auto mutableMesh = reinterpret_cast<graphics::MutableMesh*>(planeRenderable->GetMesh());
+            mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
+            planeRenderable->GetTransform().SetFromMatrixPtr(modelMat);
         }
-        //TODO: update the model transform of the renderable
-        planeRenderable->GetTransform().SetFromMatrixPtr(modelMat);
-
         //Unlike the original function i wrote the dra w is decoupled from the assembly
         //and data gathering phases, so the drawing will happen later, when i have render passes
         //and pipelines
@@ -282,7 +282,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
     //begin the offscreen render pass
-    gOffscreenRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    gOffscreenRenderPass->setClearColor(1.0f, 1.0f, 1.0f, 1.0f);
     gOffscreenRenderPass->AdvanceFrame();
     gOffscreenRenderPass->Begin(cmd, gOffscreenRenderPass->GetFramebuffer(), gOffscreenRenderPass->GetExtent());
     // Fill RDO for the cube
@@ -402,7 +402,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnPause(JNIEn
     if (gFrameTimer) {
         gFrameTimer->Pause();
     }
-    gArSessionManager->onPause();
+    if(gArSessionManager != nullptr)
+        gArSessionManager->onPause();
 }
 extern "C"
 JNIEXPORT void JNICALL
