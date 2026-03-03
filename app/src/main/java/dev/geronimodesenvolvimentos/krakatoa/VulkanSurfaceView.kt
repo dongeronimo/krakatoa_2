@@ -41,8 +41,10 @@ class VulkanSurfaceView(context: Context,var assetManager: AssetManager,var acti
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        renderThread?.stopRendering()
         val rotation = (context as Activity).windowManager.defaultDisplay.rotation
         nativeOnSurfaceChanged(width, height, rotation)
+        renderThread = RenderThread()
         renderThread?.start()
     }
 

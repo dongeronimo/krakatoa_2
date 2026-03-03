@@ -24,19 +24,19 @@ namespace graphics {
                         const uint32_t* indices, uint32_t indexCount);
     private:
         /**One vertex buffer per frame*/
-        utils::RingBuffer<VkBuffer> vertexBuffer;
+        utils::RingBuffer<VkBuffer> vertexBuffer = utils::RingBuffer<VkBuffer>(12);
         /**One index buffer per frame*/
-        utils::RingBuffer<VkBuffer> indexBuffer;
+        utils::RingBuffer<VkBuffer> indexBuffer = utils::RingBuffer<VkBuffer>(12);;
         /**Each buffer needs it's own allocation.*/
-        utils::RingBuffer<VmaAllocation> vertexBufferAllocation;
+        utils::RingBuffer<VmaAllocation> vertexBufferAllocation = utils::RingBuffer<VmaAllocation>(12);;
         /**Each buffer needs it's own allocation.*/
-        utils::RingBuffer<VmaAllocation> indexBufferAllocation;
+        utils::RingBuffer<VmaAllocation> indexBufferAllocation = utils::RingBuffer<VmaAllocation>(12);;
         /**One vertex count for each frame*/
-        utils::RingBuffer<uint32_t> vertexCount;
+        utils::RingBuffer<uint32_t> vertexCount = utils::RingBuffer<uint32_t>(12);;
         /**One index count per frame*/
-        utils::RingBuffer<uint32_t> indexCount;
+        utils::RingBuffer<uint32_t> indexCount = utils::RingBuffer<uint32_t>(12);;
         /**generation tracks changes in the buffer, used to track which buffers need to be updated*/
-        utils::RingBuffer<uint64_t> slotGeneration;
+        utils::RingBuffer<uint64_t> slotGeneration = utils::RingBuffer<uint64_t>(12);;
         /**I use the name to set names for vulkan objects in renderdoc*/
         const std::string name;
         /**We'll be creating buffers long since the object was instantiated.*/
