@@ -1,8 +1,8 @@
 #include "image_load.h"
-#include "stb/stb_image.h"
 #include "asset_loader.h"
 #include <cassert>
 #define STB_IMAGE_IMPLEMENTATION
+#include "stb/stb_image.h"
 namespace io {
     void LoadImage(const std::string& path, std::vector<uint8_t>& output, VkFormat& format, int& width, int& height)
     {
