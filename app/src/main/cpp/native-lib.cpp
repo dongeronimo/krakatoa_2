@@ -332,6 +332,11 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     // For each plane, draw with the Transparent Phong pipeline
     for (const auto& plane : gArPlanes)
     {
+        // Skip planes whose mesh hasn't received vertex data yet
+        graphics::Mesh* mesh = plane.second->GetMesh();
+        if (!mesh || !mesh->GetVertexBuffer() || mesh->GetIndexCount() == 0)
+            continue;
+
         graphics::RDO rdo;
         rdo.Add(graphics::RDO::Keys::MODEL_MAT, plane.second->GetTransform().GetWorldMatrix());
 
