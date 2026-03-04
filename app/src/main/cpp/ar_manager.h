@@ -20,6 +20,13 @@ namespace ar {
         bool valid = false;
     };
 
+    /// AR scene light estimation data (ambient intensity mode)
+    struct LightEstimate {
+        float pixelIntensity = 1.0f;          // overall brightness 0..1
+        float colorCorrection[4] = {1,1,1,1}; // RGBA color correction
+        bool valid = false;
+    };
+
     /// One entry in the available-resolutions table
     struct CameraResolution {
         int32_t width  = 0;
@@ -28,6 +35,13 @@ namespace ar {
 
     class ARSessionManager {
     public:
+        ~ARSessionManager() {
+            if (m_arLightEstimate) {
+                m_loader.ArLightEstimate_destroy(m_arLightEstimate);
+                m_arLightEstimate = nullptr;
+            }
+        }
+
         bool initialize(JNIEnv* env, jobject context, jobject activity);
         void onPause();
         void onResume();
@@ -41,6 +55,9 @@ namespace ar {
 
         /// Access the latest camera frame (valid until next onDrawFrame call)
         const CameraFrame& getCameraFrame() const { return m_cameraFrame; }
+
+        /// Access the latest light estimate
+        const LightEstimate& getLightEstimate() const { return m_lightData; }
 
         /// Table of available CPU image resolutions, populated during initialize().
         const std::vector<CameraResolution>& getAvailableResolutions() const { return m_resolutions; }
@@ -76,6 +93,8 @@ namespace ar {
         ArImage* m_cameraImage = nullptr;   // current frame's CPU image
 
         CameraFrame m_cameraFrame{};
+        ArLightEstimate* m_arLightEstimate = nullptr;
+        LightEstimate m_lightData{};
 
         int m_displayWidth = 0;
         int m_displayHeight = 0;

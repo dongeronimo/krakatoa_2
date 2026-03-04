@@ -105,6 +105,17 @@ namespace graphics {
                                           const int* displayRotation);
 
     /**
+     * Transparent Phong: alpha-blended, lit by AR scene lighting.
+     * Samples an RGBA texture (with alpha channel for transparency).
+     * Depth test enabled, depth write disabled (transparent pass).
+     * No backface culling (planes are visible from both sides).
+     *
+     * Uses ARCore ambient intensity light estimation: the render callback
+     * reads LIGHT_DIR, LIGHT_COLOR and AMBIENT_COLOR from the RDO.
+     */
+    PipelineConfig TransparentPhongConfig();
+
+    /**
      * A Vulkan graphics pipeline built from a PipelineConfig.
      *
      * Fixed aspects: dynamic viewport/scissor, vertex layout (pos+normal+uv),

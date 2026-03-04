@@ -33,6 +33,7 @@ std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
 std::unique_ptr<graphics::Pipeline> gUnshadedOpaquePipeline = nullptr;
+std::unique_ptr<graphics::Pipeline> gTransparentPhongPipeline = nullptr;
 std::unique_ptr<graphics::Pipeline> gCameraBgPipeline = nullptr;
 std::unordered_map<std::string, VkPipelineLayout> pipelineLayouts;
 std::unordered_map<std::string, VkDescriptorSetLayout> descriptorSetLayouts;
@@ -92,6 +93,17 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .AddDescriptorSetLayout(unshadedOpaqueDescriptorSetLayout)
             .Build();
     pipelineLayouts.insert({"unshaded_opaque", unshadedOpaquePipelineLayout});
+    // Transparent Phong: UBO (binding 0, vert+frag) + texture sampler (binding 1, frag)
+    auto transPhongDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
+            .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .AddBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .Build();
+    descriptorSetLayouts.insert({"transparent_phong", transPhongDescriptorSetLayout});
+    auto transPhongPipelineLayout = graphics::PipelineLayoutBuilder(gVkContext->GetDevice())
+            .AddDescriptorSetLayout(transPhongDescriptorSetLayout)
+            .Build();
+    pipelineLayouts.insert({"transparent_phong", transPhongPipelineLayout});
     // Camera background: UBO (binding 0) + Y sampler (binding 1) + UV sampler (binding 2)
     auto cameraBgDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
             .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
@@ -180,6 +192,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                                    graphics::UnshadedOpaqueConfig(),
                                                                    pipelineLayouts["unshaded_opaque"],
                                                                    descriptorSetLayouts["unshaded_opaque"]);
+    gTransparentPhongPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
+                                                                      gVkContext->GetDevice(),
+                                                                      gVkContext->GetAllocator(),
+                                                                      graphics::TransparentPhongConfig(),
+                                                                      pipelineLayouts["transparent_phong"],
+                                                                      descriptorSetLayouts["transparent_phong"]);
     gCameraBgPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
                                                               gVkContext->GetDevice(),
                                                               gVkContext->GetAllocator(),
@@ -282,27 +300,40 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gOffscreenRenderPass->AdvanceFrame();
     gOffscreenRenderPass->Begin(cmd, gOffscreenRenderPass->GetFramebuffer(), gOffscreenRenderPass->GetExtent());
     // Fill RDO for the cube
-    //TODO: For each plane, draw it
-    for (auto plane:gArPlanes)
+    // Gather AR light estimation for Phong shading
+    const auto& lightEst = gArSessionManager->getLightEstimate();
+    // Default directional light from above-right; scale by AR pixel intensity
+    glm::vec4 lightDir(0.0f, -1.0f, -0.5f, 0.0f); // points downward
+    float intensity = lightEst.valid ? lightEst.pixelIntensity : 1.0f;
+    glm::vec4 lightColor(
+        lightEst.valid ? lightEst.colorCorrection[0] : 1.0f,
+        lightEst.valid ? lightEst.colorCorrection[1] : 1.0f,
+        lightEst.valid ? lightEst.colorCorrection[2] : 1.0f,
+        intensity);
+    glm::vec4 ambientColor(0.3f * intensity, 0.3f * intensity, 0.3f * intensity, 1.0f);
+
+    // For each plane, draw with the Transparent Phong pipeline
+    for (const auto& plane : gArPlanes)
     {
-        //TODO: Fill the RDO
         graphics::RDO rdo;
-        rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
         rdo.Add(graphics::RDO::Keys::MODEL_MAT, plane.second->GetTransform().GetWorldMatrix());
-        //TODO: Get view matrix from AR
+
         std::array<float,16> arViewMatrix{};
         gArSessionManager->getViewMatrix(arViewMatrix.data());
         glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
         rdo.Add(graphics::RDO::Keys::VIEW_MAT, viewMat);
-        //TODO: Get proj matrix from AR
+
         std::array<float,16> arProjMatrix{};
         gArSessionManager->getProjectionMatrix(0.01f, 100.f, arProjMatrix.data());
         glm::mat4 projMat = glm::make_mat4(arProjMatrix.data());
         rdo.Add(graphics::RDO::Keys::PROJ_MAT, projMat);
-        //TODO: Bind the pipeline
-        gUnshadedOpaquePipeline->Bind(cmd);
-        //TODO: Draw
-        gUnshadedOpaquePipeline->Draw(cmd, &rdo, plane.second.get(), frameIndex);
+
+        rdo.Add(graphics::RDO::Keys::LIGHT_DIR, lightDir);
+        rdo.Add(graphics::RDO::Keys::LIGHT_COLOR, lightColor);
+        rdo.Add(graphics::RDO::Keys::AMBIENT_COLOR, ambientColor);
+
+        gTransparentPhongPipeline->Bind(cmd);
+        gTransparentPhongPipeline->Draw(cmd, &rdo, plane.second.get(), frameIndex);
     }
     //TODO: Remove the cube, it served it's proposes
 //    graphics::RDO rdo;
@@ -375,6 +406,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
         vkDestroyPipelineLayout(gVkContext->GetDevice(), value, nullptr);
     }
     gCameraBgPipeline = nullptr;
+    gTransparentPhongPipeline = nullptr;
     gUnshadedOpaquePipeline = nullptr;
     gCommandPoolManager = nullptr;
     gFrameSync = nullptr;
