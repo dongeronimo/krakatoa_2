@@ -428,9 +428,9 @@ PipelineConfig graphics::TransparentPhongConfig(Texture2D* texture) {
                                 &uniformBuffer->descriptorSets.Current(), 0, nullptr);
 
         Mesh* mesh = obj->GetMesh();
-        assert(mesh != nullptr);
+        if (!mesh) return;
         auto vb = mesh->GetVertexBuffer();
-        assert(vb != nullptr);
+        if (!vb || mesh->GetIndexCount() == 0) return;
         VkBuffer vertexBuffers[] = {vb};
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
