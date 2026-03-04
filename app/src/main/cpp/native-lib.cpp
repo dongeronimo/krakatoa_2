@@ -28,6 +28,8 @@
 #include "mesh.h"
 #include "mutable_mesh.h"
 #include "concatenate.h"
+#include "texture2d.h"
+#include "image_load.h"
 #include <glm/gtc/type_ptr.hpp>
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
@@ -43,6 +45,7 @@ std::unordered_map<std::string, std::unique_ptr<graphics::Mesh>> gMeshes;
 std::unique_ptr<graphics::FrameTimer> gFrameTimer = nullptr;
 std::unique_ptr<ar::ARSessionManager> gArSessionManager = nullptr;
 std::unique_ptr<graphics::ARCameraImage> gCameraImage = nullptr;
+std::unique_ptr<graphics::Texture2D> gGridTexture = nullptr;
 //dummy egl context do deal with arcore bullshit. use it before getting each ar frame.
 ar::EglDummyContext m_eglDummy;
 int gDisplayRotation = 0;
@@ -150,8 +153,22 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                 quadData.indexCount,
                 "fullscreen_quad");
     }
-    //load the meshes
-    //cube.SetMesh(gMeshes["cube"].get());
+    // Load textures
+    {
+        std::vector<uint8_t> pixels;
+        VkFormat fmt;
+        int w, h;
+        io::LoadImage("textures/grid.png", pixels, fmt, w, h);
+        gGridTexture = std::make_unique<graphics::Texture2D>(
+                gVkContext->GetDevice(),
+                gVkContext->GetAllocator(),
+                *gCommandPoolManager,
+                pixels,
+                static_cast<uint32_t>(w),
+                static_cast<uint32_t>(h),
+                fmt,
+                "grid");
+    }
     cameraBgQuad = std::make_unique<graphics::Renderable>("camera_bg");
     cameraBgQuad->SetMesh(gMeshes["fullscreen_quad"].get());
     //create the frame timer
@@ -195,7 +212,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
     gTransparentPhongPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
                                                                       gVkContext->GetDevice(),
                                                                       gVkContext->GetAllocator(),
-                                                                      graphics::TransparentPhongConfig(),
+                                                                      graphics::TransparentPhongConfig(gGridTexture.get()),
                                                                       pipelineLayouts["transparent_phong"],
                                                                       descriptorSetLayouts["transparent_phong"]);
     gCameraBgPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
@@ -408,6 +425,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     gCameraBgPipeline = nullptr;
     gTransparentPhongPipeline = nullptr;
     gUnshadedOpaquePipeline = nullptr;
+    gGridTexture = nullptr;
     gCommandPoolManager = nullptr;
     gFrameSync = nullptr;
     gFrameTimer = nullptr;

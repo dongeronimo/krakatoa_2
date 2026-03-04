@@ -10,6 +10,7 @@
 #include "rdo.h"
 #include "concatenate.h"
 #include "ar_camera_image.h"
+#include "texture2d.h"
 #include <glm/gtc/type_ptr.hpp>
 using namespace graphics;
 
@@ -290,7 +291,7 @@ static void createPlaceholderTexture(VkDevice device, VmaAllocator allocator,
     assert(r == VK_SUCCESS);
 }
 
-PipelineConfig graphics::TransparentPhongConfig() {
+PipelineConfig graphics::TransparentPhongConfig(Texture2D* texture) {
     PipelineConfig config;
     config.vertexShader   = "transparent_phong.vert";
     config.fragmentShader = "transparent_phong.frag";
@@ -319,14 +320,28 @@ PipelineConfig graphics::TransparentPhongConfig() {
 
     auto state = std::make_shared<TransparentPhongState>();
 
-    config.renderCallback = [state](VkCommandBuffer cmd, RDO* rdo, Renderable* obj,
+    config.renderCallback = [state, texture](VkCommandBuffer cmd, RDO* rdo, Renderable* obj,
                                      Pipeline& pipeline, uint32_t frameIndex) {
-        // -- First-time init: create placeholder texture + UBO buffers --
+        // -- First-time init: create sampler, optional placeholder, UBO buffers --
         std::shared_ptr<UniformBuffer> uniformBuffer = pipeline.GetUniformBuffer(obj->GetId());
         if (uniformBuffer == nullptr) {
             state->device = pipeline.GetDevice();
             state->alloc  = pipeline.GetAllocator();
-            createPlaceholderTexture(pipeline.GetDevice(), pipeline.GetAllocator(), *state);
+            if (!texture) {
+                createPlaceholderTexture(pipeline.GetDevice(), pipeline.GetAllocator(), *state);
+            } else {
+                // Create sampler for the real texture
+                VkSamplerCreateInfo samplerInfo{};
+                samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+                samplerInfo.magFilter    = VK_FILTER_LINEAR;
+                samplerInfo.minFilter    = VK_FILTER_LINEAR;
+                samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+                samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+                samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+                samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+                VkResult r = vkCreateSampler(pipeline.GetDevice(), &samplerInfo, nullptr, &state->sampler);
+                assert(r == VK_SUCCESS);
+            }
 
             auto ub = std::make_shared<UniformBuffer>();
             createGpuUniformBuffers<TransparentPhongUniformBuffer>(
@@ -335,6 +350,10 @@ PipelineConfig graphics::TransparentPhongConfig() {
             ub->size = sizeof(TransparentPhongUniformBuffer);
             ub->id   = obj->GetId();
             ub->deathCounter = 100;
+
+            VkImageView texView = texture ? texture->GetImageView() : state->placeholderView;
+            VkImageLayout texLayout = texture ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                              : VK_IMAGE_LAYOUT_GENERAL;
 
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
                 VkDescriptorSet& ds = ub->descriptorSets.Next();
@@ -346,11 +365,11 @@ PipelineConfig graphics::TransparentPhongConfig() {
                 bufInfo.offset = 0;
                 bufInfo.range  = sizeof(TransparentPhongUniformBuffer);
 
-                // Binding 1: texture sampler (placeholder)
+                // Binding 1: texture sampler
                 VkDescriptorImageInfo imgInfo{};
                 imgInfo.sampler     = state->sampler;
-                imgInfo.imageView   = state->placeholderView;
-                imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                imgInfo.imageView   = texView;
+                imgInfo.imageLayout = texLayout;
 
                 VkWriteDescriptorSet writes[2]{};
                 writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

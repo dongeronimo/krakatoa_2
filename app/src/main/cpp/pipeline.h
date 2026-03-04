@@ -14,6 +14,7 @@ namespace graphics {
     class RenderPass;
     class Pipeline;
     class ARCameraImage;
+    class Texture2D;
 
     /**
      * Configuration for the variable parts of a graphics pipeline.
@@ -112,8 +113,10 @@ namespace graphics {
      *
      * Uses ARCore ambient intensity light estimation: the render callback
      * reads LIGHT_DIR, LIGHT_COLOR and AMBIENT_COLOR from the RDO.
+     *
+     * @param texture  Texture to sample. If null, uses a 1x1 white placeholder.
      */
-    PipelineConfig TransparentPhongConfig();
+    PipelineConfig TransparentPhongConfig(Texture2D* texture);
 
     /**
      * A Vulkan graphics pipeline built from a PipelineConfig.
