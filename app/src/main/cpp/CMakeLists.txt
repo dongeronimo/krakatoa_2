@@ -119,6 +119,9 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         mesh.h
         texture2d.cpp
         texture2d.h
+        stb/stb_image.h
+        image_load.cpp
+        image_load.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
