@@ -399,44 +399,50 @@ PipelineConfig graphics::TransparentPhongConfig(Texture2D* texture) {
             uniformBuffer = ub;
         }
 
-        // -- Fill UBO with matrices and lighting data --
-        glm::mat4 model = rdo->GetMat4(RDO::MODEL_MAT);
-        glm::mat4 view  = rdo->GetMat4(RDO::VIEW_MAT);
-        glm::mat4 proj  = rdo->GetMat4(RDO::PROJ_MAT);
-        glm::mat4 normalMat = glm::transpose(glm::inverse(model));
-        glm::vec4 lightDir    = rdo->GetVec4(RDO::LIGHT_DIR);
-        glm::vec4 lightColor  = rdo->GetVec4(RDO::LIGHT_COLOR);
-        glm::vec4 ambientColor = rdo->GetVec4(RDO::AMBIENT_COLOR);
-
-        TransparentPhongUniformBuffer data{};
-        memcpy(data.model,       glm::value_ptr(model),      sizeof(float) * 16);
-        memcpy(data.view,        glm::value_ptr(view),       sizeof(float) * 16);
-        memcpy(data.projection,  glm::value_ptr(proj),       sizeof(float) * 16);
-        memcpy(data.normalMatrix, glm::value_ptr(normalMat), sizeof(float) * 16);
-        memcpy(data.lightDir,    glm::value_ptr(lightDir),   sizeof(float) * 4);
-        memcpy(data.lightColor,  glm::value_ptr(lightColor), sizeof(float) * 4);
-        memcpy(data.ambientColor, glm::value_ptr(ambientColor), sizeof(float) * 4);
-
-        memcpy(uniformBuffer->mappedData.Current(), &data, sizeof(data));
-        vmaFlushAllocation(pipeline.GetAllocator(),
-                           uniformBuffer->gpuBufferAllocation.Current(),
-                           0, sizeof(data));
-
-        // Bind descriptor set, vertex/index buffers and draw
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                pipeline.GetPipelineLayout(), 0, 1,
-                                &uniformBuffer->descriptorSets.Current(), 0, nullptr);
-
+        // -- Check if mesh has valid data before touching the command buffer --
         Mesh* mesh = obj->GetMesh();
-        if (!mesh) return;
-        auto vb = mesh->GetVertexBuffer();
-        if (!vb || mesh->GetIndexCount() == 0) return;
-        VkBuffer vertexBuffers[] = {vb};
-        VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
-        vkCmdBindIndexBuffer(cmd, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, mesh->GetIndexCount(), 1, 0, 0, 0);
+        bool canDraw = mesh
+                       && mesh->GetVertexBuffer() != VK_NULL_HANDLE
+                       && mesh->GetIndexCount() > 0;
 
+        if (canDraw) {
+            // Fill UBO with matrices and lighting data
+            glm::mat4 model = rdo->GetMat4(RDO::MODEL_MAT);
+            glm::mat4 view  = rdo->GetMat4(RDO::VIEW_MAT);
+            glm::mat4 proj  = rdo->GetMat4(RDO::PROJ_MAT);
+            glm::mat4 normalMat = glm::transpose(glm::inverse(model));
+            glm::vec4 lightDir    = rdo->GetVec4(RDO::LIGHT_DIR);
+            glm::vec4 lightColor  = rdo->GetVec4(RDO::LIGHT_COLOR);
+            glm::vec4 ambientColor = rdo->GetVec4(RDO::AMBIENT_COLOR);
+
+            TransparentPhongUniformBuffer data{};
+            memcpy(data.model,       glm::value_ptr(model),      sizeof(float) * 16);
+            memcpy(data.view,        glm::value_ptr(view),       sizeof(float) * 16);
+            memcpy(data.projection,  glm::value_ptr(proj),       sizeof(float) * 16);
+            memcpy(data.normalMatrix, glm::value_ptr(normalMat), sizeof(float) * 16);
+            memcpy(data.lightDir,    glm::value_ptr(lightDir),   sizeof(float) * 4);
+            memcpy(data.lightColor,  glm::value_ptr(lightColor), sizeof(float) * 4);
+            memcpy(data.ambientColor, glm::value_ptr(ambientColor), sizeof(float) * 4);
+
+            memcpy(uniformBuffer->mappedData.Current(), &data, sizeof(data));
+            vmaFlushAllocation(pipeline.GetAllocator(),
+                               uniformBuffer->gpuBufferAllocation.Current(),
+                               0, sizeof(data));
+
+            // Bind descriptor set, vertex/index buffers and draw
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipeline.GetPipelineLayout(), 0, 1,
+                                    &uniformBuffer->descriptorSets.Current(), 0, nullptr);
+
+            VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
+            VkDeviceSize offsets[] = {0};
+            vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(cmd, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, mesh->GetIndexCount(), 1, 0, 0, 0);
+        }
+
+        // ALWAYS advance ring buffers and keep-alive, even when not drawing.
+        // Skipping these causes ring buffer desync and premature UBO destruction.
         uniformBuffer->deathCounter++;
         uniformBuffer->gpuBuffer.Next();
         uniformBuffer->gpuBufferAllocation.Next();
