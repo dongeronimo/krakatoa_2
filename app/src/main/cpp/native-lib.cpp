@@ -209,7 +209,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                                    graphics::UnshadedOpaqueConfig(),
                                                                    pipelineLayouts["unshaded_opaque"],
                                                                    descriptorSetLayouts["unshaded_opaque"]);
-    gTransparentPhongPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
+    gTransparentPhongPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
                                                                       gVkContext->GetDevice(),
                                                                       gVkContext->GetAllocator(),
                                                                       graphics::TransparentPhongConfig(gGridTexture.get()),
@@ -321,7 +321,26 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gOffscreenRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     gOffscreenRenderPass->AdvanceFrame();
     gOffscreenRenderPass->Begin(cmd, gOffscreenRenderPass->GetFramebuffer(), gOffscreenRenderPass->GetExtent());
-    // Fill RDO for the cube
+    //TODO: Remove the cube, it served it's proposes
+//    graphics::RDO rdo;
+//    rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
+//    rdo.Add(graphics::RDO::Keys::MODEL_MAT, cube.GetTransform().GetWorldMatrix());
+//    rdo.Add(graphics::RDO::Keys::VIEW_MAT, view);
+//    rdo.Add(graphics::RDO::Keys::PROJ_MAT, proj);
+    // Draw the cube using the unshaded pipeline.
+//    gUnshadedOpaquePipeline->Bind(cmd);
+//    gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube, frameIndex);
+    gOffscreenRenderPass->End(cmd);
+    //begin the swap chain render pass
+    gSwapChainRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    gSwapChainRenderPass->Begin(cmd,
+                                gSwapChainRenderPass->GetFramebuffer(imageIndex),
+                                gVkContext->getSwapchainExtent());
+    // Draw camera background (fullscreen quad with camera texture, depth=1.0)
+    if (gCameraImage->IsValid()) {
+        gCameraBgPipeline->Bind(cmd);
+        gCameraBgPipeline->Draw(cmd, nullptr, cameraBgQuad.get(), frameIndex);
+    }
     // Gather AR light estimation for Phong shading
     const auto& lightEst = gArSessionManager->getLightEstimate();
     // Default directional light from above-right; scale by AR pixel intensity
@@ -334,7 +353,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         intensity);
     glm::vec4 ambientColor(0.3f * intensity, 0.3f * intensity, 0.3f * intensity, 1.0f);
 
-    // For each plane, draw with the Transparent Phong pipeline
+    // Draw AR planes over camera background with Transparent Phong pipeline.
+    // Camera bg wrote depth=1.0 (far plane) so planes with depth test LESS pass.
     for (const auto& plane : gArPlanes)
     {
         graphics::RDO rdo;
@@ -356,26 +376,6 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
 
         gTransparentPhongPipeline->Bind(cmd);
         gTransparentPhongPipeline->Draw(cmd, &rdo, plane.second.get(), frameIndex);
-    }
-    //TODO: Remove the cube, it served it's proposes
-//    graphics::RDO rdo;
-//    rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(0,1,0,1));
-//    rdo.Add(graphics::RDO::Keys::MODEL_MAT, cube.GetTransform().GetWorldMatrix());
-//    rdo.Add(graphics::RDO::Keys::VIEW_MAT, view);
-//    rdo.Add(graphics::RDO::Keys::PROJ_MAT, proj);
-    // Draw the cube using the unshaded pipeline.
-//    gUnshadedOpaquePipeline->Bind(cmd);
-//    gUnshadedOpaquePipeline->Draw(cmd, &rdo, &cube, frameIndex);
-    gOffscreenRenderPass->End(cmd);
-    //begin the swap chain render pass
-    gSwapChainRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    gSwapChainRenderPass->Begin(cmd,
-                                gSwapChainRenderPass->GetFramebuffer(imageIndex),
-                                gVkContext->getSwapchainExtent());
-    // Draw camera background (fullscreen quad with camera texture, depth=1.0)
-    if (gCameraImage->IsValid()) {
-        gCameraBgPipeline->Bind(cmd);
-        gCameraBgPipeline->Draw(cmd, nullptr, cameraBgQuad.get(), frameIndex);
     }
     gSwapChainRenderPass->End(cmd);
     gCommandPoolManager->EndFrame();
