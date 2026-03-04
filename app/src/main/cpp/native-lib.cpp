@@ -238,6 +238,11 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                                                                                jobject thiz) {
 
     gFrameSync->WaitForCurrentFrame();
+    // Garbage-collect unused uniform buffers AFTER the fence wait guarantees
+    // that command buffers from the oldest in-flight frame are done.
+    // Must NOT run during command buffer recording (would destroy bound resources).
+    if (gTransparentPhongPipeline) gTransparentPhongPipeline->CollectGarbage();
+    if (gCameraBgPipeline) gCameraBgPipeline->CollectGarbage();
 
     gFrameTimer->Tick();
     gFrameSync->AdvanceFrame();

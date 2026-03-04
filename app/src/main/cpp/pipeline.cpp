@@ -856,7 +856,6 @@ void Pipeline::Bind(VkCommandBuffer cmd) const {
 
 void Pipeline::Draw(VkCommandBuffer cmd, RDO *rdo, Renderable *renderable, uint32_t frameIndex) {
     renderCallback(cmd, rdo, renderable, *this, frameIndex);
-    DecreaseDeathCounter();
 }
 
 VkDescriptorSet Pipeline::AllocateDescriptorSet() {
@@ -877,7 +876,7 @@ void Pipeline::AddUniformBuffer(uint64_t id, std::shared_ptr<UniformBuffer> b) {
     uniformBuffers.insert({id, b});
 }
 
-void Pipeline::DecreaseDeathCounter() {
+void Pipeline::CollectGarbage() {
     std::vector<std::shared_ptr<UniformBuffer>> toDie;
     for(auto& [key, value] : uniformBuffers){
         value->deathCounter--;

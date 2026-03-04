@@ -165,6 +165,12 @@ namespace graphics {
                 return uniformBuffers[id];
         }
         void AddUniformBuffer(uint64_t id, std::shared_ptr<UniformBuffer> b);
+        /**
+         * Sweep uniform buffers, decrement death counters and destroy any that hit 0.
+         * Call once per frame AFTER the fence wait (so in-flight command buffers are done),
+         * NOT during command buffer recording.
+         */
+        void CollectGarbage();
     private:
         VkDevice device = VK_NULL_HANDLE;
         VmaAllocator allocator = VK_NULL_HANDLE;
@@ -175,7 +181,6 @@ namespace graphics {
         std::function<void(VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline, uint32_t frameIndex)> renderCallback;
         VkShaderModule CreateShaderModule(const std::vector<uint8_t>& data);
         std::unordered_map<uint64_t, std::shared_ptr<UniformBuffer>> uniformBuffers;
-        void DecreaseDeathCounter();
     };
 }
 #endif //KRAKATOA_PIPELINE_H
