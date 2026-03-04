@@ -117,6 +117,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         mutable_mesh.cpp
         mutable_mesh.h
         mesh.h
+        texture2d.cpp
+        texture2d.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
