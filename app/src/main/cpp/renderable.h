@@ -15,7 +15,7 @@ namespace graphics {
         bool ownsMesh = false;
     public:
         Transform& GetTransform(){return *transform;}
-        uint64_t GetId()const{return id;}
+        int64_t GetId()const{return id;}
         const std::string& GetMeshId()const{return meshId;}
         void SetMesh(Mesh* m, bool _ownsMesh = false){
             mesh = m;

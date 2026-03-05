@@ -317,7 +317,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
         //TODO: update the model transform of the renderable
         planeRenderable->GetTransform().SetFromMatrixPtr(modelMat);
-
+        auto msg = Concatenate("[arplanes] updated plane ", planeid);
+        LOGI("%s", msg.c_str());
         //Unlike the original function i wrote the dra w is decoupled from the assembly
         //and data gathering phases, so the drawing will happen later, when i have render passes
         //and pipelines
@@ -325,17 +326,6 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     // Upload camera feed (YUV->RGBA) into the ring-buffered Vulkan image.
     // After this call the current image is in SHADER_READ_ONLY_OPTIMAL, ready to sample.
     gCameraImage->Update(cmd, gArSessionManager->getCameraFrame());
-    ////////////////////// Update objects data /////////////////////////////////////////////////////
-    //Set camera
-    //glm::vec3 cameraPos = {3.0f, 5.0f, 7.0f};
-    //glm::mat4 view = glm::lookAt(cameraPos, glm::vec3(0,0,0), glm::vec3(0,1,0));
-    //glm::mat4 proj = glm::perspective(glm::radians(45.0f),
-    //                                  gSwapChainRenderPass->GetExtent().width/(float)gSwapChainRenderPass->GetExtent().height,
-    //                                  0.1f, 100.0f);
-    //float dt = gFrameTimer->GetDeltaTime();
-    //cube.GetTransform().Rotate(glm::vec3(0, 45.0f * dt, 0));
-    ////////////////////////////////////////////////////////////////////////////////////////////////
-
     //begin the offscreen render pass
     gOffscreenRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     gOffscreenRenderPass->AdvanceFrame();
@@ -373,6 +363,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
 
         gTransparentPhongPipeline->Bind(cmd);
         gTransparentPhongPipeline->Draw(cmd, &rdo, plane.second.get(), frameIndex);
+        auto msg = Concatenate("[arplanes] drew plane ", plane.second->GetId());
+        LOGI("%s", msg.c_str());
     }
     gOffscreenRenderPass->End(cmd);
     //begin the swap chain render pass
