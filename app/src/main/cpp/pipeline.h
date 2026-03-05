@@ -15,6 +15,7 @@ namespace graphics {
     class Pipeline;
     class ARCameraImage;
     class Texture2D;
+    class OffscreenRenderPass;
 
     /**
      * Configuration for the variable parts of a graphics pipeline.
@@ -117,6 +118,16 @@ namespace graphics {
      * @param texture  Texture to sample. If null, uses a 1x1 white placeholder.
      */
     PipelineConfig TransparentPhongConfig(Texture2D* texture);
+
+    /**
+     * Compose: alpha-blends the offscreen render pass color attachment over
+     * whatever is already in the swapchain framebuffer.
+     * Uses a fullscreen quad with a single combined image sampler (binding 0).
+     * The offscreen image view is re-bound each frame since it's ring-buffered.
+     *
+     * @param offscreenPass  The offscreen render pass whose color image to composite.
+     */
+    PipelineConfig ComposeConfig(OffscreenRenderPass* offscreenPass);
 
     /**
      * A Vulkan graphics pipeline built from a PipelineConfig.

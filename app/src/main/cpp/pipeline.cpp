@@ -454,6 +454,121 @@ PipelineConfig graphics::TransparentPhongConfig(Texture2D* texture) {
 }
 
 // ============================================================
+// Compose (offscreen → swapchain)
+// ============================================================
+
+#include "offscreen_render_pass.h"
+
+struct ComposeState {
+    VkSampler sampler = VK_NULL_HANDLE;
+    VkDevice  device  = VK_NULL_HANDLE;
+
+    ~ComposeState() {
+        if (sampler != VK_NULL_HANDLE)
+            vkDestroySampler(device, sampler, nullptr);
+        LOGI("ComposeState: sampler destroyed");
+    }
+};
+
+PipelineConfig graphics::ComposeConfig(OffscreenRenderPass* offscreenPass) {
+    PipelineConfig config;
+    config.vertexShader   = "compose.vert";
+    config.fragmentShader = "compose.frag";
+
+    // Fullscreen quad over the camera background: no depth test needed
+    config.depthTestEnable  = false;
+    config.depthWriteEnable = false;
+
+    // Alpha blend: offscreen color on top of whatever is in the framebuffer
+    config.blendEnable          = true;
+    config.srcColorBlendFactor  = VK_BLEND_FACTOR_SRC_ALPHA;
+    config.dstColorBlendFactor  = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    config.colorBlendOp         = VK_BLEND_OP_ADD;
+    config.srcAlphaBlendFactor  = VK_BLEND_FACTOR_ONE;
+    config.dstAlphaBlendFactor  = VK_BLEND_FACTOR_ZERO;
+    config.alphaBlendOp         = VK_BLEND_OP_ADD;
+
+    config.cullMode = VK_CULL_MODE_NONE;
+
+    config.descriptorPoolSizes = {
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_DESCRIPTOR_SETS_PER_POOL}
+    };
+
+    auto state = std::make_shared<ComposeState>();
+
+    config.renderCallback = [state, offscreenPass](VkCommandBuffer cmd, RDO* /*rdo*/, Renderable* obj,
+                                                    Pipeline& pipeline, uint32_t frameIndex) {
+        std::shared_ptr<UniformBuffer> ub = pipeline.GetUniformBuffer(obj->GetId());
+        if (ub == nullptr) {
+            state->device = pipeline.GetDevice();
+
+            // Create sampler
+            VkSamplerCreateInfo samplerInfo{};
+            samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerInfo.magFilter    = VK_FILTER_LINEAR;
+            samplerInfo.minFilter    = VK_FILTER_LINEAR;
+            samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            VkResult r = vkCreateSampler(pipeline.GetDevice(), &samplerInfo, nullptr, &state->sampler);
+            assert(r == VK_SUCCESS);
+
+            ub = std::make_shared<UniformBuffer>();
+            ub->size = 0;
+            ub->id   = obj->GetId();
+            ub->deathCounter = 100;
+
+            // Allocate descriptor sets (one per frame in flight)
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                ub->descriptorSets.Next() = pipeline.AllocateDescriptorSet();
+            }
+
+            pipeline.AddUniformBuffer(obj->GetId(), ub);
+
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                debug::SetDescriptorSetName(pipeline.GetDevice(), ub->descriptorSets[i],
+                                            Concatenate("ComposeDescSet[", i, "]"));
+            }
+        }
+
+        // Update the image binding every frame since the offscreen image is ring-buffered
+        VkDescriptorImageInfo imgInfo{};
+        imgInfo.sampler     = state->sampler;
+        imgInfo.imageView   = offscreenPass->GetColorImageView();
+        imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet write{};
+        write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet          = ub->descriptorSets.Current();
+        write.dstBinding      = 0;
+        write.descriptorCount = 1;
+        write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo      = &imgInfo;
+
+        vkUpdateDescriptorSets(pipeline.GetDevice(), 1, &write, 0, nullptr);
+
+        // Bind and draw fullscreen quad
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipeline.GetPipelineLayout(), 0, 1,
+                                &ub->descriptorSets.Current(), 0, nullptr);
+
+        Mesh* mesh = obj->GetMesh();
+        assert(mesh != nullptr);
+        VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(cmd, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, mesh->GetIndexCount(), 1, 0, 0, 0);
+
+        ub->deathCounter++;
+        ub->descriptorSets.Next();
+    };
+
+    return config;
+}
+
+// ============================================================
 // Camera background
 // ============================================================
 
@@ -834,7 +949,8 @@ Pipeline::~Pipeline() {
     // Destroy all remaining uniform buffers
     for (auto& [key, ub] : uniformBuffers) {
         for (uint32_t i = 0; i < ub->gpuBuffer.Size(); i++) {
-            vmaDestroyBuffer(allocator, ub->gpuBuffer[i], ub->gpuBufferAllocation[i]);
+            if(ub->gpuBuffer[i] != VK_NULL_HANDLE)
+                vmaDestroyBuffer(allocator, ub->gpuBuffer[i], ub->gpuBufferAllocation[i]);
             if(ub->stagingBuffer[i] != VK_NULL_HANDLE)
                 vmaDestroyBuffer(allocator, ub->stagingBuffer[i], ub->stagingBufferAllocation[i]);
         }
@@ -886,7 +1002,8 @@ void Pipeline::CollectGarbage() {
     }
     for(auto& dead:toDie){
         for (uint32_t i = 0; i < dead->gpuBuffer.Size(); i++) {
-            vmaDestroyBuffer(allocator, dead->gpuBuffer[i], dead->gpuBufferAllocation[i]);
+            if(dead->gpuBuffer[i] != VK_NULL_HANDLE)
+                vmaDestroyBuffer(allocator, dead->gpuBuffer[i], dead->gpuBufferAllocation[i]);
             if(dead->stagingBuffer[i] != VK_NULL_HANDLE)
                 vmaDestroyBuffer(allocator, dead->stagingBuffer[i], dead->stagingBufferAllocation[i]);
         }
