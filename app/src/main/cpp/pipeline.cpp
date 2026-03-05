@@ -10,6 +10,7 @@
 #include "rdo.h"
 #include "concatenate.h"
 #include "ar_camera_image.h"
+#include "texture2d.h"
 #include <glm/gtc/type_ptr.hpp>
 using namespace graphics;
 
@@ -134,9 +135,12 @@ PipelineConfig graphics::UnshadedOpaqueConfig() {
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 pipeline.GetPipelineLayout(), 0, 1,
                                 &uniformBuffer->descriptorSets.Current(), 0, nullptr);
-        StaticMesh* mesh = obj->GetMesh();
+        Mesh* mesh = obj->GetMesh();
         assert(mesh != nullptr);
-        VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
+        auto vb = mesh->GetVertexBuffer();
+        assert(vb != nullptr);
+        VkBuffer vertexBuffers[] = {vb};
+
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
         vkCmdBindIndexBuffer(cmd, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
@@ -190,6 +194,377 @@ PipelineConfig graphics::WireframeConfig() {
     config.renderCallback = [](VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline, uint32_t frameIndex){
 
     };
+    return config;
+}
+
+// ============================================================
+// Transparent Phong
+// ============================================================
+
+struct TransparentPhongUniformBuffer {
+    float model[16];
+    float view[16];
+    float projection[16];
+    float normalMatrix[16]; // inverse-transpose of model
+    float lightDir[4];      // xyz = direction (world space), w = pad
+    float lightColor[4];    // rgb = color, a = intensity
+    float ambientColor[4];  // rgb = ambient, a = pad
+};
+
+// Shared state for the transparent phong pipeline: owns a 1x1 white
+// placeholder texture + sampler so the pipeline works before a real
+// texture is assigned.
+struct TransparentPhongState {
+    VkSampler sampler        = VK_NULL_HANDLE;
+    VkImage   placeholderImg = VK_NULL_HANDLE;
+    VkImageView placeholderView = VK_NULL_HANDLE;
+    VmaAllocation placeholderAlloc = VK_NULL_HANDLE;
+    VkDevice  device   = VK_NULL_HANDLE;
+    VmaAllocator alloc = VK_NULL_HANDLE;
+
+    ~TransparentPhongState() {
+        if (placeholderView != VK_NULL_HANDLE)
+            vkDestroyImageView(device, placeholderView, nullptr);
+        if (placeholderImg != VK_NULL_HANDLE)
+            vmaDestroyImage(alloc, placeholderImg, placeholderAlloc);
+        if (sampler != VK_NULL_HANDLE)
+            vkDestroySampler(device, sampler, nullptr);
+        LOGI("TransparentPhongState: resources destroyed");
+    }
+};
+
+/// Create a 1x1 RGBA8 white pixel image for use as placeholder texture.
+static void createPlaceholderTexture(VkDevice device, VmaAllocator allocator,
+                                      TransparentPhongState& state) {
+    // Image
+    VkImageCreateInfo imgInfo{};
+    imgInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imgInfo.imageType     = VK_IMAGE_TYPE_2D;
+    imgInfo.format        = VK_FORMAT_R8G8B8A8_UNORM;
+    imgInfo.extent        = {1, 1, 1};
+    imgInfo.mipLevels     = 1;
+    imgInfo.arrayLayers   = 1;
+    imgInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
+    imgInfo.tiling        = VK_IMAGE_TILING_LINEAR;
+    imgInfo.usage         = VK_IMAGE_USAGE_SAMPLED_BIT;
+    imgInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                      VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VmaAllocationInfo mapInfo{};
+
+    VkResult r = vmaCreateImage(allocator, &imgInfo, &allocInfo,
+                                &state.placeholderImg, &state.placeholderAlloc, &mapInfo);
+    assert(r == VK_SUCCESS);
+
+    // Fill with white semi-transparent pixel (RGBA = 255,255,255,128)
+    uint8_t pixel[4] = {255, 255, 255, 128};
+    memcpy(mapInfo.pMappedData, pixel, 4);
+    vmaFlushAllocation(allocator, state.placeholderAlloc, 0, 4);
+
+    // Image view
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image      = state.placeholderImg;
+    viewInfo.viewType   = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format     = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel   = 0;
+    viewInfo.subresourceRange.levelCount     = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount     = 1;
+    r = vkCreateImageView(device, &viewInfo, nullptr, &state.placeholderView);
+    assert(r == VK_SUCCESS);
+
+    // Sampler
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter    = VK_FILTER_LINEAR;
+    samplerInfo.minFilter    = VK_FILTER_LINEAR;
+    samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    r = vkCreateSampler(device, &samplerInfo, nullptr, &state.sampler);
+    assert(r == VK_SUCCESS);
+}
+
+PipelineConfig graphics::TransparentPhongConfig(Texture2D* texture) {
+    PipelineConfig config;
+    config.vertexShader   = "transparent_phong.vert";
+    config.fragmentShader = "transparent_phong.frag";
+
+    // Transparent pass: depth test on, depth write off
+    config.depthTestEnable  = true;
+    config.depthWriteEnable = false;
+
+    // Alpha blending
+    config.blendEnable          = true;
+    config.srcColorBlendFactor  = VK_BLEND_FACTOR_SRC_ALPHA;
+    config.dstColorBlendFactor  = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    config.colorBlendOp         = VK_BLEND_OP_ADD;
+    config.srcAlphaBlendFactor  = VK_BLEND_FACTOR_ONE;
+    config.dstAlphaBlendFactor  = VK_BLEND_FACTOR_ZERO;
+    config.alphaBlendOp         = VK_BLEND_OP_ADD;
+
+    // No backface culling - planes visible from both sides
+    config.cullMode = VK_CULL_MODE_NONE;
+
+    // Pool needs both UBO and combined image sampler descriptors
+    config.descriptorPoolSizes = {
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         MAX_DESCRIPTOR_SETS_PER_POOL},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,  MAX_DESCRIPTOR_SETS_PER_POOL}
+    };
+
+    auto state = std::make_shared<TransparentPhongState>();
+
+    config.renderCallback = [state, texture](VkCommandBuffer cmd, RDO* rdo, Renderable* obj,
+                                     Pipeline& pipeline, uint32_t frameIndex) {
+        // -- First-time init: create sampler, optional placeholder, UBO buffers --
+        std::shared_ptr<UniformBuffer> uniformBuffer = pipeline.GetUniformBuffer(obj->GetId());
+        if (uniformBuffer == nullptr) {
+            state->device = pipeline.GetDevice();
+            state->alloc  = pipeline.GetAllocator();
+            if (!texture) {
+                createPlaceholderTexture(pipeline.GetDevice(), pipeline.GetAllocator(), *state);
+            } else {
+                // Create sampler for the real texture
+                VkSamplerCreateInfo samplerInfo{};
+                samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+                samplerInfo.magFilter    = VK_FILTER_LINEAR;
+                samplerInfo.minFilter    = VK_FILTER_LINEAR;
+                samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+                samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+                samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+                samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+                VkResult r = vkCreateSampler(pipeline.GetDevice(), &samplerInfo, nullptr, &state->sampler);
+                assert(r == VK_SUCCESS);
+            }
+
+            auto ub = std::make_shared<UniformBuffer>();
+            createGpuUniformBuffers<TransparentPhongUniformBuffer>(
+                    pipeline.GetAllocator(), MAX_FRAMES_IN_FLIGHT,
+                    ub->gpuBuffer, ub->gpuBufferAllocation, ub->mappedData);
+            ub->size = sizeof(TransparentPhongUniformBuffer);
+            ub->id   = obj->GetId();
+            ub->deathCounter = 100;
+
+            VkImageView texView = texture ? texture->GetImageView() : state->placeholderView;
+            VkImageLayout texLayout = texture ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                              : VK_IMAGE_LAYOUT_GENERAL;
+
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                VkDescriptorSet& ds = ub->descriptorSets.Next();
+                ds = pipeline.AllocateDescriptorSet();
+
+                // Binding 0: UBO
+                VkDescriptorBufferInfo bufInfo{};
+                bufInfo.buffer = ub->gpuBuffer[i];
+                bufInfo.offset = 0;
+                bufInfo.range  = sizeof(TransparentPhongUniformBuffer);
+
+                // Binding 1: texture sampler
+                VkDescriptorImageInfo imgInfo{};
+                imgInfo.sampler     = state->sampler;
+                imgInfo.imageView   = texView;
+                imgInfo.imageLayout = texLayout;
+
+                VkWriteDescriptorSet writes[2]{};
+                writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[0].dstSet          = ds;
+                writes[0].dstBinding      = 0;
+                writes[0].descriptorCount = 1;
+                writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                writes[0].pBufferInfo     = &bufInfo;
+
+                writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[1].dstSet          = ds;
+                writes[1].dstBinding      = 1;
+                writes[1].descriptorCount = 1;
+                writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                writes[1].pImageInfo      = &imgInfo;
+
+                vkUpdateDescriptorSets(pipeline.GetDevice(), 2, writes, 0, nullptr);
+            }
+            pipeline.AddUniformBuffer(obj->GetId(), ub);
+
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                debug::SetBufferName(pipeline.GetDevice(), ub->gpuBuffer[i],
+                                     Concatenate("TransPhongUBO[", i, "]"));
+                debug::SetDescriptorSetName(pipeline.GetDevice(), ub->descriptorSets[i],
+                                            Concatenate("TransPhongDescSet[", i, "]"));
+            }
+            uniformBuffer = ub;
+        }
+
+        // -- Check if mesh has valid data before touching the command buffer --
+        Mesh* mesh = obj->GetMesh();
+        bool canDraw = mesh
+                       && mesh->GetVertexBuffer() != VK_NULL_HANDLE
+                       && mesh->GetIndexCount() > 0;
+
+        if (canDraw) {
+            // Fill UBO with matrices and lighting data
+            glm::mat4 model = rdo->GetMat4(RDO::MODEL_MAT);
+            glm::mat4 view  = rdo->GetMat4(RDO::VIEW_MAT);
+            glm::mat4 proj  = rdo->GetMat4(RDO::PROJ_MAT);
+            glm::mat4 normalMat = glm::transpose(glm::inverse(model));
+            glm::vec4 lightDir    = rdo->GetVec4(RDO::LIGHT_DIR);
+            glm::vec4 lightColor  = rdo->GetVec4(RDO::LIGHT_COLOR);
+            glm::vec4 ambientColor = rdo->GetVec4(RDO::AMBIENT_COLOR);
+
+            TransparentPhongUniformBuffer data{};
+            memcpy(data.model,       glm::value_ptr(model),      sizeof(float) * 16);
+            memcpy(data.view,        glm::value_ptr(view),       sizeof(float) * 16);
+            memcpy(data.projection,  glm::value_ptr(proj),       sizeof(float) * 16);
+            memcpy(data.normalMatrix, glm::value_ptr(normalMat), sizeof(float) * 16);
+            memcpy(data.lightDir,    glm::value_ptr(lightDir),   sizeof(float) * 4);
+            memcpy(data.lightColor,  glm::value_ptr(lightColor), sizeof(float) * 4);
+            memcpy(data.ambientColor, glm::value_ptr(ambientColor), sizeof(float) * 4);
+
+            memcpy(uniformBuffer->mappedData.Current(), &data, sizeof(data));
+            vmaFlushAllocation(pipeline.GetAllocator(),
+                               uniformBuffer->gpuBufferAllocation.Current(),
+                               0, sizeof(data));
+
+            // Bind descriptor set, vertex/index buffers and draw
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipeline.GetPipelineLayout(), 0, 1,
+                                    &uniformBuffer->descriptorSets.Current(), 0, nullptr);
+
+            VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
+            VkDeviceSize offsets[] = {0};
+            vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(cmd, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, mesh->GetIndexCount(), 1, 0, 0, 0);
+        }
+
+        // ALWAYS advance ring buffers and keep-alive, even when not drawing.
+        // Skipping these causes ring buffer desync and premature UBO destruction.
+        uniformBuffer->deathCounter++;
+        uniformBuffer->gpuBuffer.Next();
+        uniformBuffer->gpuBufferAllocation.Next();
+        uniformBuffer->mappedData.Next();
+        uniformBuffer->descriptorSets.Next();
+    };
+
+    return config;
+}
+
+// ============================================================
+// Compose (offscreen → swapchain)
+// ============================================================
+
+#include "offscreen_render_pass.h"
+
+struct ComposeState {
+    VkSampler sampler = VK_NULL_HANDLE;
+    VkDevice  device  = VK_NULL_HANDLE;
+
+    ~ComposeState() {
+        if (sampler != VK_NULL_HANDLE)
+            vkDestroySampler(device, sampler, nullptr);
+        LOGI("ComposeState: sampler destroyed");
+    }
+};
+
+PipelineConfig graphics::ComposeConfig(OffscreenRenderPass* offscreenPass) {
+    PipelineConfig config;
+    config.vertexShader   = "compose.vert";
+    config.fragmentShader = "compose.frag";
+
+    // Fullscreen quad over the camera background: no depth test needed
+    config.depthTestEnable  = false;
+    config.depthWriteEnable = false;
+
+    // Alpha blend: offscreen color on top of whatever is in the framebuffer
+    config.blendEnable          = true;
+    config.srcColorBlendFactor  = VK_BLEND_FACTOR_SRC_ALPHA;
+    config.dstColorBlendFactor  = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    config.colorBlendOp         = VK_BLEND_OP_ADD;
+    config.srcAlphaBlendFactor  = VK_BLEND_FACTOR_ONE;
+    config.dstAlphaBlendFactor  = VK_BLEND_FACTOR_ZERO;
+    config.alphaBlendOp         = VK_BLEND_OP_ADD;
+
+    config.cullMode = VK_CULL_MODE_NONE;
+
+    config.descriptorPoolSizes = {
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_DESCRIPTOR_SETS_PER_POOL}
+    };
+
+    auto state = std::make_shared<ComposeState>();
+
+    config.renderCallback = [state, offscreenPass](VkCommandBuffer cmd, RDO* /*rdo*/, Renderable* obj,
+                                                    Pipeline& pipeline, uint32_t frameIndex) {
+        std::shared_ptr<UniformBuffer> ub = pipeline.GetUniformBuffer(obj->GetId());
+        if (ub == nullptr) {
+            state->device = pipeline.GetDevice();
+
+            // Create sampler
+            VkSamplerCreateInfo samplerInfo{};
+            samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerInfo.magFilter    = VK_FILTER_LINEAR;
+            samplerInfo.minFilter    = VK_FILTER_LINEAR;
+            samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            VkResult r = vkCreateSampler(pipeline.GetDevice(), &samplerInfo, nullptr, &state->sampler);
+            assert(r == VK_SUCCESS);
+
+            ub = std::make_shared<UniformBuffer>();
+            ub->size = 0;
+            ub->id   = obj->GetId();
+            ub->deathCounter = 100;
+
+            // Allocate descriptor sets (one per frame in flight)
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                ub->descriptorSets.Next() = pipeline.AllocateDescriptorSet();
+            }
+
+            pipeline.AddUniformBuffer(obj->GetId(), ub);
+
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                debug::SetDescriptorSetName(pipeline.GetDevice(), ub->descriptorSets[i],
+                                            Concatenate("ComposeDescSet[", i, "]"));
+            }
+        }
+
+        // Update the image binding every frame since the offscreen image is ring-buffered
+        VkDescriptorImageInfo imgInfo{};
+        imgInfo.sampler     = state->sampler;
+        imgInfo.imageView   = offscreenPass->GetColorImageView();
+        imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet write{};
+        write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet          = ub->descriptorSets.Current();
+        write.dstBinding      = 0;
+        write.descriptorCount = 1;
+        write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo      = &imgInfo;
+
+        vkUpdateDescriptorSets(pipeline.GetDevice(), 1, &write, 0, nullptr);
+
+        // Bind and draw fullscreen quad
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipeline.GetPipelineLayout(), 0, 1,
+                                &ub->descriptorSets.Current(), 0, nullptr);
+
+        Mesh* mesh = obj->GetMesh();
+        assert(mesh != nullptr);
+        VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(cmd, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, mesh->GetIndexCount(), 1, 0, 0, 0);
+
+        ub->deathCounter++;
+        ub->descriptorSets.Next();
+    };
+
     return config;
 }
 
@@ -354,7 +729,7 @@ PipelineConfig graphics::CameraBackgroundConfig(ARCameraImage* cameraImage,
                                 pipeline.GetPipelineLayout(), 0, 1,
                                 &ub->descriptorSets.Current(), 0, nullptr);
 
-        StaticMesh* mesh = obj->GetMesh();
+        Mesh* mesh = obj->GetMesh();
         assert(mesh != nullptr);
         VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
         VkDeviceSize offsets[] = {0};
@@ -574,7 +949,8 @@ Pipeline::~Pipeline() {
     // Destroy all remaining uniform buffers
     for (auto& [key, ub] : uniformBuffers) {
         for (uint32_t i = 0; i < ub->gpuBuffer.Size(); i++) {
-            vmaDestroyBuffer(allocator, ub->gpuBuffer[i], ub->gpuBufferAllocation[i]);
+            if(ub->gpuBuffer[i] != VK_NULL_HANDLE)
+                vmaDestroyBuffer(allocator, ub->gpuBuffer[i], ub->gpuBufferAllocation[i]);
             if(ub->stagingBuffer[i] != VK_NULL_HANDLE)
                 vmaDestroyBuffer(allocator, ub->stagingBuffer[i], ub->stagingBufferAllocation[i]);
         }
@@ -596,7 +972,6 @@ void Pipeline::Bind(VkCommandBuffer cmd) const {
 
 void Pipeline::Draw(VkCommandBuffer cmd, RDO *rdo, Renderable *renderable, uint32_t frameIndex) {
     renderCallback(cmd, rdo, renderable, *this, frameIndex);
-    DecreaseDeathCounter();
 }
 
 VkDescriptorSet Pipeline::AllocateDescriptorSet() {
@@ -617,7 +992,7 @@ void Pipeline::AddUniformBuffer(uint64_t id, std::shared_ptr<UniformBuffer> b) {
     uniformBuffers.insert({id, b});
 }
 
-void Pipeline::DecreaseDeathCounter() {
+void Pipeline::CollectGarbage() {
     std::vector<std::shared_ptr<UniformBuffer>> toDie;
     for(auto& [key, value] : uniformBuffers){
         value->deathCounter--;
@@ -627,7 +1002,8 @@ void Pipeline::DecreaseDeathCounter() {
     }
     for(auto& dead:toDie){
         for (uint32_t i = 0; i < dead->gpuBuffer.Size(); i++) {
-            vmaDestroyBuffer(allocator, dead->gpuBuffer[i], dead->gpuBufferAllocation[i]);
+            if(dead->gpuBuffer[i] != VK_NULL_HANDLE)
+                vmaDestroyBuffer(allocator, dead->gpuBuffer[i], dead->gpuBufferAllocation[i]);
             if(dead->stagingBuffer[i] != VK_NULL_HANDLE)
                 vmaDestroyBuffer(allocator, dead->stagingBuffer[i], dead->stagingBufferAllocation[i]);
         }

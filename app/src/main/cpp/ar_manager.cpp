@@ -53,6 +53,10 @@ namespace ar {
         assert(m_planeList);
         LOGI("ARSessionManager::initialize - plane list created");
 
+        m_loader.ArLightEstimate_create(m_session, &m_arLightEstimate);
+        assert(m_arLightEstimate);
+        LOGI("ARSessionManager::initialize - light estimate created");
+
         LOGI("ARSessionManager::initialize - done (CPU image path, no OES texture)");
         return true;
     }
@@ -105,6 +109,20 @@ namespace ar {
         m_isTracking = (trackingState == AR_TRACKING_STATE_TRACKING);
 
         m_loader.ArCamera_release(camera);
+
+        // Update light estimate
+        if (m_arLightEstimate) {
+            m_loader.ArFrame_getLightEstimate(m_session, m_frame, m_arLightEstimate);
+            ArLightEstimateState lightState;
+            m_loader.ArLightEstimate_getState(m_session, m_arLightEstimate, &lightState);
+            if (lightState == AR_LIGHT_ESTIMATE_STATE_VALID) {
+                m_loader.ArLightEstimate_getPixelIntensity(
+                        m_session, m_arLightEstimate, &m_lightData.pixelIntensity);
+                m_loader.ArLightEstimate_getColorCorrection(
+                        m_session, m_arLightEstimate, m_lightData.colorCorrection);
+                m_lightData.valid = true;
+            }
+        }
 
         // Update plane list
         m_loader.ArSession_getAllTrackables(

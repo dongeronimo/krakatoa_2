@@ -60,6 +60,7 @@ namespace graphics {
         void RotateAroundWorldAxis(const glm::vec3& pivot, const glm::vec3& worldAxis, float angleDegrees);
         void RotateAroundPivotEuler(const glm::vec3& pivot, const glm::vec3& deltaAngles);
 
+        void SetFromMatrixPtr(const float* matrixPtr);
     private:
         void UpdateQuaternionFromEuler();
         void UpdateEulerFromQuaternion();

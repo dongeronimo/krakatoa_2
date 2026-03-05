@@ -125,6 +125,14 @@ namespace ar {
             LOAD_ARCORE_FUNC(ArSession_getSupportedCameraConfigsWithFilter);
             LOAD_ARCORE_FUNC(ArSession_setCameraConfig);
 
+            // Light estimation
+            LOAD_ARCORE_FUNC(ArLightEstimate_create);
+            LOAD_ARCORE_FUNC(ArLightEstimate_destroy);
+            LOAD_ARCORE_FUNC(ArLightEstimate_getState);
+            LOAD_ARCORE_FUNC(ArLightEstimate_getPixelIntensity);
+            LOAD_ARCORE_FUNC(ArLightEstimate_getColorCorrection);
+            LOAD_ARCORE_FUNC(ArFrame_getLightEstimate);
+
 #undef LOAD_ARCORE_FUNC
 
             LOGI("ARCore library loaded successfully");
@@ -253,6 +261,23 @@ namespace ar {
                 ArCameraConfigList* list) = nullptr;
         ArStatus (*ArSession_setCameraConfig)(const ArSession* session,
                                               const ArCameraConfig* camera_config) = nullptr;
+
+        // ── Light estimation ──
+        void (*ArLightEstimate_create)(const ArSession* session,
+                                       ArLightEstimate** out_light_estimate) = nullptr;
+        void (*ArLightEstimate_destroy)(ArLightEstimate* light_estimate) = nullptr;
+        void (*ArLightEstimate_getState)(const ArSession* session,
+                                         const ArLightEstimate* light_estimate,
+                                         ArLightEstimateState* out_light_estimate_state) = nullptr;
+        void (*ArLightEstimate_getPixelIntensity)(const ArSession* session,
+                                                   const ArLightEstimate* light_estimate,
+                                                   float* out_pixel_intensity) = nullptr;
+        void (*ArLightEstimate_getColorCorrection)(const ArSession* session,
+                                                    const ArLightEstimate* light_estimate,
+                                                    float* out_color_correction_4) = nullptr;
+        void (*ArFrame_getLightEstimate)(const ArSession* session,
+                                         const ArFrame* frame,
+                                         ArLightEstimate* out_light_estimate) = nullptr;
 
     private:
         ARCoreLoader() = default;

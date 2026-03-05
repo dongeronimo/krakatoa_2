@@ -15,7 +15,8 @@ namespace graphics {
     class RDO {
     public:
         enum Keys {
-            MODEL_MAT, VIEW_MAT, PROJ_MAT, COLOR
+            MODEL_MAT, VIEW_MAT, PROJ_MAT, COLOR,
+            LIGHT_DIR, LIGHT_COLOR, AMBIENT_COLOR
         };
         void Add(Keys k, const glm::mat4& mat){
             mat4Table.insert({k, mat});

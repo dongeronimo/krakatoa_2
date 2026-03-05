@@ -112,6 +112,16 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         egl_dummy_context.h
         ar_camera_image.cpp
         ar_camera_image.h
+        ar_plane.cpp
+        ar_plane.h
+        mutable_mesh.cpp
+        mutable_mesh.h
+        mesh.h
+        texture2d.cpp
+        texture2d.h
+        stb/stb_image.h
+        image_load.cpp
+        image_load.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
@@ -165,3 +175,4 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
             COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
     )
 endif()
+

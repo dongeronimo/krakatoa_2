@@ -14,6 +14,8 @@ namespace graphics {
     class RenderPass;
     class Pipeline;
     class ARCameraImage;
+    class Texture2D;
+    class OffscreenRenderPass;
 
     /**
      * Configuration for the variable parts of a graphics pipeline.
@@ -105,6 +107,29 @@ namespace graphics {
                                           const int* displayRotation);
 
     /**
+     * Transparent Phong: alpha-blended, lit by AR scene lighting.
+     * Samples an RGBA texture (with alpha channel for transparency).
+     * Depth test enabled, depth write disabled (transparent pass).
+     * No backface culling (planes are visible from both sides).
+     *
+     * Uses ARCore ambient intensity light estimation: the render callback
+     * reads LIGHT_DIR, LIGHT_COLOR and AMBIENT_COLOR from the RDO.
+     *
+     * @param texture  Texture to sample. If null, uses a 1x1 white placeholder.
+     */
+    PipelineConfig TransparentPhongConfig(Texture2D* texture);
+
+    /**
+     * Compose: alpha-blends the offscreen render pass color attachment over
+     * whatever is already in the swapchain framebuffer.
+     * Uses a fullscreen quad with a single combined image sampler (binding 0).
+     * The offscreen image view is re-bound each frame since it's ring-buffered.
+     *
+     * @param offscreenPass  The offscreen render pass whose color image to composite.
+     */
+    PipelineConfig ComposeConfig(OffscreenRenderPass* offscreenPass);
+
+    /**
      * A Vulkan graphics pipeline built from a PipelineConfig.
      *
      * Fixed aspects: dynamic viewport/scissor, vertex layout (pos+normal+uv),
@@ -151,6 +176,12 @@ namespace graphics {
                 return uniformBuffers[id];
         }
         void AddUniformBuffer(uint64_t id, std::shared_ptr<UniformBuffer> b);
+        /**
+         * Sweep uniform buffers, decrement death counters and destroy any that hit 0.
+         * Call once per frame AFTER the fence wait (so in-flight command buffers are done),
+         * NOT during command buffer recording.
+         */
+        void CollectGarbage();
     private:
         VkDevice device = VK_NULL_HANDLE;
         VmaAllocator allocator = VK_NULL_HANDLE;
@@ -161,7 +192,6 @@ namespace graphics {
         std::function<void(VkCommandBuffer cmd, RDO* rdo, Renderable* obj, Pipeline& pipeline, uint32_t frameIndex)> renderCallback;
         VkShaderModule CreateShaderModule(const std::vector<uint8_t>& data);
         std::unordered_map<uint64_t, std::shared_ptr<UniformBuffer>> uniformBuffers;
-        void DecreaseDeathCounter();
     };
 }
 #endif //KRAKATOA_PIPELINE_H

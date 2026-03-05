@@ -124,3 +124,54 @@ MeshData MeshLoader::CreateFullscreenQuad() {
     LOGI("MeshLoader: created fullscreen quad - 4 vertices, 6 indices");
     return result;
 }
+
+std::shared_ptr<MeshData> io::GenerateARPlaneMesh(const float* polygonXZ,
+                                            int floatCount,
+                                            float uvScale) {
+    auto result = std::make_shared<MeshData>();
+    int vertexCount = floatCount / 2;
+    if (vertexCount < 3) return result;
+    // Compute centroid of the polygon
+    float cx = 0.0f, cz = 0.0f;
+    for (int i = 0; i < vertexCount; i++) {
+        cx += polygonXZ[i * 2];
+        cz += polygonXZ[i * 2 + 1];
+    }
+    cx /= static_cast<float>(vertexCount);
+    cz /= static_cast<float>(vertexCount);
+    // Normal pointing up in plane-local space (the plane lies on XZ, Y=0)
+    const float nx = 0.0f, ny = 1.0f, nz = 0.0f;
+    // Vertex 0: centroid
+    result->vertices.push_back(cx);
+    result->vertices.push_back(0.0f);
+    result->vertices.push_back(cz);
+    result->vertices.push_back(nx);
+    result->vertices.push_back(ny);
+    result->vertices.push_back(nz);
+    result->vertices.push_back(cx * uvScale);
+    result->vertices.push_back(cz * uvScale);
+    // Vertices 1..vertexCount: polygon boundary points
+    for (int i = 0; i < vertexCount; i++) {
+        float x = polygonXZ[i * 2];
+        float z = polygonXZ[i * 2 + 1];
+        result->vertices.push_back(x);
+        result->vertices.push_back(0.0f);
+        result->vertices.push_back(z);
+        result->vertices.push_back(nx);
+        result->vertices.push_back(ny);
+        result->vertices.push_back(nz);
+        result->vertices.push_back(x * uvScale);
+        result->vertices.push_back(z * uvScale);
+    }
+    // Fan triangles from centroid to each edge
+    for (int i = 0; i < vertexCount; i++) {
+        result->indices.push_back(0);                              // centroid
+        result->indices.push_back(static_cast<uint32_t>(i + 1));   // current
+        result->indices.push_back(static_cast<uint32_t>((i + 1) % vertexCount + 1)); // next (wraps)
+    }
+    result->vertexCount = static_cast<uint32_t>(result->vertices.size() / 8); // 8 floats per vertex
+    result->indexCount  = static_cast<uint32_t>(result->indices.size());
+    return result;
+}
+
+

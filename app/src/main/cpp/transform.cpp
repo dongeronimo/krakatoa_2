@@ -5,6 +5,7 @@
 #include <glm/gtx/euler_angles.hpp>
 #include <cmath>
 #include <stdexcept>
+#include <glm/gtc/type_ptr.hpp>
 namespace graphics {
     Transform::Transform(Renderable* owner)
             : owner(owner)
@@ -184,5 +185,26 @@ namespace graphics {
         glm::quat rotQuat = glm::quat_cast(rotMat);
         rotation = rotQuat * rotation;
         UpdateEulerFromQuaternion();
+    }
+
+    void Transform::SetFromMatrixPtr(const float *matrixPtr) {
+        if (!matrixPtr) return;
+
+        // Converte o ponteiro de float para uma matriz 4x4 do GLM
+        glm::mat4 mat = glm::make_mat4(matrixPtr);
+
+        glm::vec3 skew;
+        glm::vec4 perspective;
+
+        // Decompõe a matriz
+        // Note que passamos referências para os membros da classe
+        glm::decompose(mat, this->scale, this->rotation, this->position, skew, perspective);
+
+        // Como você usa Euler Angles explicitamente, precisamos atualizar o vetor de graus
+        // O decompose retorna o quaternion, então sincronizamos o Euler a partir dele
+        UpdateEulerFromQuaternion();
+
+        // Opcional: Se sua worldMatrix for cacheada, atualize-a aqui
+        this->worldMatrix = mat;
     }
 }
