@@ -287,6 +287,20 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gCommandPoolManager->BeginFrame();
     VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
     const uint32_t frameIndex = gVkContext->GetFrameIndex();
+    /////////////////////////////
+    // get the ar depth image handle in arcore
+    ArImage* depthImageHandle = gArSessionManager->getDepthImage();
+    // get the depth image dimensions
+    int32_t arDepthWidth = 0; int32_t arDepthHeight = 0;
+    gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
+    // get the image data
+    int32_t depthStride = 0; std::vector<uint16_t> depthData{};
+    gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
+    gArSessionManager->releaseDepthImage(depthImageHandle);//must release the image
+    // TODO: Create or update the current ar depth image in vulkan
+    // TODO: Run the compute shader to calculate the world position of the things seen by the depth buffer
+    // TODO: Run marching cubes to create the geometry for the real world
+    ////////////////////////////
     // Update AR planes
     UpdateARPlanes();
 

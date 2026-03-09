@@ -438,5 +438,26 @@ namespace ar {
             m_loader.ArTrackable_release(trackable);
         }
     }
+    ArImage* ARSessionManager::getDepthImage() {
+        ArImage* depthImage = nullptr;
+        m_loader.ArFrame_acquireDepthImage16Bits(m_session, m_frame, &depthImage);
+        return depthImage;
+    }
+    void ARSessionManager::getDepthImageDimensions(ArImage* image, int32_t& w, int32_t& h) {
+        w = 0, h = 0;
+        m_loader.ArImage_getWidth(m_session, image, &w);
+        m_loader.ArImage_getHeight(m_session, image, &h);
+    }
+    void ARSessionManager::getDepthImageData(ArImage* image, std::vector<uint16_t>& data, int32_t& stride) {
+        const uint8_t* rawData = nullptr;
+        int32_t dataLength = 0;
+        m_loader.ArImage_getPlaneData(m_session, image, 0, &rawData, &dataLength);
+        m_loader.ArImage_getPlaneRowStride(m_session, image, 0, &stride);
 
+        const uint16_t* depthMm = reinterpret_cast<const uint16_t*>(rawData);
+        data.assign(depthMm, depthMm + dataLength / sizeof(uint16_t));
+    }
+    void ARSessionManager::releaseDepthImage(ArImage* image) {
+        m_loader.ArImage_release(image);
+    }
 }
