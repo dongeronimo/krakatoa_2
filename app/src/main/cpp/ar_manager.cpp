@@ -1,4 +1,3 @@
-
 #include "ar_manager.h"
 #include "android_log.h"
 #include <cassert>
@@ -22,10 +21,20 @@ namespace ar {
         ArStatus status = m_loader.ArSession_create(env, context, &m_session);
         LOGI("ARSessionManager::initialize - ArSession_create returned: %d", status);
 
+        // Check session creation before using m_session
         if (status != AR_SUCCESS) {
             LOGE("Failed to create ARCore session: %d", status);
             return false;
         }
+
+        // Check if depth is supported on this device
+        int32_t is_supported = 0;
+        m_loader.ArSession_isDepthModeSupported(m_session, AR_DEPTH_MODE_AUTOMATIC, &is_supported);
+        if (!is_supported) {
+            LOGE("Depth mode not supported. Dying");
+            return false;
+        }
+
         // Dummy GL texture — ARCore exige uma, mas nunca a usamos.
         // A imagem real vem via ArFrame_acquireCameraImage (CPU path).
         GLuint dummyTexture = 0;
@@ -42,9 +51,17 @@ namespace ar {
         LOGI("ARSessionManager::initialize - creating config...");
         m_loader.ArConfig_create(m_session, &m_config);
 
+        // Enable depth mode
+        m_loader.ArConfig_setDepthMode(m_session, m_config, AR_DEPTH_MODE_AUTOMATIC);
+
         LOGI("ARSessionManager::initialize - configuring session...");
         status = m_loader.ArSession_configure(m_session, m_config);
         LOGI("ARSessionManager::initialize - configure returned: %d", status);
+
+        if (status != AR_SUCCESS) {
+            LOGE("Failed to configure ARCore session: %d", status);
+            return false;
+        }
 
         LOGI("ARSessionManager::initialize - creating frame...");
         m_loader.ArFrame_create(m_session, &m_frame);
