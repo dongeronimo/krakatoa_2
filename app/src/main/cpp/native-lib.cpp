@@ -60,6 +60,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
     std::string hello = "Hello from C++";
     return env->NewStringUTF(hello.c_str());
 }
+
+void UpdateARPlanes();
 extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCreated(JNIEnv *env,
@@ -250,6 +252,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceDest
     vkDeviceWaitIdle(gVkContext->GetDevice());
     gMeshes.clear();
 }
+
 extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(JNIEnv *env,
@@ -268,10 +271,10 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     VkSemaphore acquireSem = gFrameSync->GetNextAcquireSemaphore();
     gCommandPoolManager->AdvanceFrame();
     gCameraImage->AdvanceFrame();
-    for(auto p:gArPlanes){
-        //std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
-        ((graphics::MutableMesh*)p.second->GetMesh())->Advance();
-    }
+//    for(auto p:gArPlanes){
+//        //std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
+//        ((graphics::MutableMesh*)p.second->GetMesh())->Advance();
+//    }
     // Update ARCore first - acquires CPU camera image (YUV planes)
     m_eglDummy.makeCurrent();
     gArSessionManager->onDrawFrame();
@@ -288,41 +291,42 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
     const uint32_t frameIndex = gVkContext->GetFrameIndex();
     // Update AR planes
-    gArSessionManager->forEachPlane([&](int64_t planeid, const float* modelMat,
-            const float* polygon, int polyFloatCount){
-        // Generate the mesh from the polygon contour (centroid fan)
-        auto meshData = io::GenerateARPlaneMesh(polygon, polyFloatCount, 1.0f);
-        // nothing, leave this functions
-        if (meshData->indices.empty())
-            return;
-        assert(meshData->indexCount > 0);
-        assert(meshData->vertexCount > 0);
-        //TODO: Seek renderables by plane id
-        auto itPlanes = gArPlanes.find(planeid);
-        if(itPlanes == gArPlanes.end()) {
-            //no plane with this id, create a new renderable, with a new mutable mesh and add to the plane.
-            auto name = Concatenate("AR_PLANE ", planeid);
-            std::shared_ptr<graphics::Renderable> newRenderable = std::make_shared<graphics::Renderable>(planeid);
-            graphics::MutableMesh* newMesh = new graphics::MutableMesh(gVkContext->GetDevice(),
-                                                                       gVkContext->GetAllocator(),
-                                                                       *(gCommandPoolManager.get()),
-                                                                       name);
-            newRenderable->SetMesh(newMesh, true);
-            gArPlanes.insert({planeid, newRenderable});
-            newMesh->Advance();
-        }
-        auto planeRenderable = gArPlanes[planeid];
-        //TODO: update the mutable mesh
-        auto mutableMesh = reinterpret_cast<graphics::MutableMesh*>(planeRenderable->GetMesh());
-        mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
-        //TODO: update the model transform of the renderable
-        planeRenderable->GetTransform().SetFromMatrixPtr(modelMat);
-        auto msg = Concatenate("[arplanes] updated plane ", planeid);
-        LOGI("%s", msg.c_str());
-        //Unlike the original function i wrote the dra w is decoupled from the assembly
-        //and data gathering phases, so the drawing will happen later, when i have render passes
-        //and pipelines
-    });
+    UpdateARPlanes();
+//    gArSessionManager->forEachPlane([&](int64_t planeid, const float* modelMat,
+//            const float* polygon, int polyFloatCount){
+//        // Generate the mesh from the polygon contour (centroid fan)
+//        auto meshData = io::GenerateARPlaneMesh(polygon, polyFloatCount, 1.0f);
+//        // nothing, leave this functions
+//        if (meshData->indices.empty())
+//            return;
+//        assert(meshData->indexCount > 0);
+//        assert(meshData->vertexCount > 0);
+//        //TODO: Seek renderables by plane id
+//        auto itPlanes = gArPlanes.find(planeid);
+//        if(itPlanes == gArPlanes.end()) {
+//            //no plane with this id, create a new renderable, with a new mutable mesh and add to the plane.
+//            auto name = Concatenate("AR_PLANE ", planeid);
+//            std::shared_ptr<graphics::Renderable> newRenderable = std::make_shared<graphics::Renderable>(planeid);
+//            graphics::MutableMesh* newMesh = new graphics::MutableMesh(gVkContext->GetDevice(),
+//                                                                       gVkContext->GetAllocator(),
+//                                                                       *(gCommandPoolManager.get()),
+//                                                                       name);
+//            newRenderable->SetMesh(newMesh, true);
+//            gArPlanes.insert({planeid, newRenderable});
+//            newMesh->Advance();
+//        }
+//        auto planeRenderable = gArPlanes[planeid];
+//        //TODO: update the mutable mesh
+//        auto mutableMesh = reinterpret_cast<graphics::MutableMesh*>(planeRenderable->GetMesh());
+//        mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
+//        //TODO: update the model transform of the renderable
+//        planeRenderable->GetTransform().SetFromMatrixPtr(modelMat);
+//        auto msg = Concatenate("[arplanes] updated plane ", planeid);
+//        LOGI("%s", msg.c_str());
+//        //Unlike the original function i wrote the dra w is decoupled from the assembly
+//        //and data gathering phases, so the drawing will happen later, when i have render passes
+//        //and pipelines
+//    });
     // Upload camera feed (YUV->RGBA) into the ring-buffered Vulkan image.
     // After this call the current image is in SHADER_READ_ONLY_OPTIMAL, ready to sample.
     gCameraImage->Update(cmd, gArSessionManager->getCameraFrame());
@@ -505,4 +509,46 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeSetResolution
         JNIEnv *env, jobject thiz, jint index) {
     if (!gArSessionManager) return JNI_FALSE;
     return gArSessionManager->setResolution(index) ? JNI_TRUE : JNI_FALSE;
+}
+
+void UpdateARPlanes() {
+    for(auto p:gArPlanes){
+        //std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
+        ((graphics::MutableMesh*)p.second->GetMesh())->Advance();
+    }
+    gArSessionManager->forEachPlane([&](int64_t planeid, const float* modelMat,
+                                        const float* polygon, int polyFloatCount){
+        // Generate the mesh from the polygon contour (centroid fan)
+        auto meshData = io::GenerateARPlaneMesh(polygon, polyFloatCount, 1.0f);
+        // nothing, leave this functions
+        if (meshData->indices.empty())
+            return;
+        assert(meshData->indexCount > 0);
+        assert(meshData->vertexCount > 0);
+        //TODO: Seek renderables by plane id
+        auto itPlanes = gArPlanes.find(planeid);
+        if(itPlanes == gArPlanes.end()) {
+            //no plane with this id, create a new renderable, with a new mutable mesh and add to the plane.
+            auto name = Concatenate("AR_PLANE ", planeid);
+            std::shared_ptr<graphics::Renderable> newRenderable = std::make_shared<graphics::Renderable>(planeid);
+            graphics::MutableMesh* newMesh = new graphics::MutableMesh(gVkContext->GetDevice(),
+                                                                       gVkContext->GetAllocator(),
+                                                                       *(gCommandPoolManager.get()),
+                                                                       name);
+            newRenderable->SetMesh(newMesh, true);
+            gArPlanes.insert({planeid, newRenderable});
+            newMesh->Advance();
+        }
+        auto planeRenderable = gArPlanes[planeid];
+        //TODO: update the mutable mesh
+        auto mutableMesh = reinterpret_cast<graphics::MutableMesh*>(planeRenderable->GetMesh());
+        mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
+        //TODO: update the model transform of the renderable
+        planeRenderable->GetTransform().SetFromMatrixPtr(modelMat);
+        auto msg = Concatenate("[arplanes] updated plane ", planeid);
+        LOGI("%s", msg.c_str());
+        //Unlike the original function i wrote the dra w is decoupled from the assembly
+        //and data gathering phases, so the drawing will happen later, when i have render passes
+        //and pipelines
+    });
 }

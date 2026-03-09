@@ -122,6 +122,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         stb/stb_image.h
         image_load.cpp
         image_load.h
+        ar_depth_image.cpp
+        ar_depth_image.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore

@@ -142,7 +142,8 @@ namespace ar {
             LOAD_ARCORE_FUNC(ArFrame_acquireRawDepthImage16Bits);
             LOAD_ARCORE_FUNC(ArFrame_acquireRawDepthConfidenceImage);
 
-            LOAD_ARCORE_FUNC(ArCamera_getIntrinsics);
+            LOAD_ARCORE_FUNC(ArCamera_getTextureIntrinsics);
+            LOAD_ARCORE_FUNC(ArCamera_getImageIntrinsics);
             LOAD_ARCORE_FUNC(ArCameraIntrinsics_create);
             LOAD_ARCORE_FUNC(ArCameraIntrinsics_destroy);
             LOAD_ARCORE_FUNC(ArCameraIntrinsics_getFocalLength);
@@ -301,8 +302,10 @@ namespace ar {
         ArStatus (*ArFrame_acquireDepthImage)(const ArSession*, const ArFrame*, ArImage**) = nullptr;
         ArStatus (*ArFrame_acquireRawDepthImage16Bits)(const ArSession*, const ArFrame*, ArImage**) = nullptr;
         ArStatus (*ArFrame_acquireRawDepthConfidenceImage)(const ArSession*, const ArFrame*, ArImage**) = nullptr;
-        void (*ArCamera_getIntrinsics)(const ArSession*, const ArCamera*,
-                                       ArCameraIntrinsics* out) = nullptr;
+        void (*ArCamera_getTextureIntrinsics)(const ArSession*, const ArCamera*,
+                                              ArCameraIntrinsics* out) = nullptr;
+        void (*ArCamera_getImageIntrinsics)(const ArSession*, const ArCamera*,
+                                            ArCameraIntrinsics* out) = nullptr;
         void (*ArCameraIntrinsics_create)(const ArSession*, ArCameraIntrinsics**) = nullptr;
         void (*ArCameraIntrinsics_destroy)(ArCameraIntrinsics*) = nullptr;
         void (*ArCameraIntrinsics_getFocalLength)(const ArSession*, const ArCameraIntrinsics*,
