@@ -21,9 +21,8 @@ layout(location = 1) out vec2 fragUV;
 void main()
 {
     gl_Position = ubo.proj * ubo.view * ubo.model * vec4(inPosition, 1.0);
-    // ARCore projection matrices use OpenGL NDC convention (Y-up).
-    // Vulkan NDC has Y-down, so flip Y to get correct screen placement.
-    gl_Position.y = -gl_Position.y;
+    // No Y-flip here: the compose pass already handles the OpenGL→Vulkan
+    // Y convention difference via its UV flip (1.0 - inUV.y).
     fragWorldNormal = normalize(mat3(ubo.normalMatrix) * inNormal);
     fragUV = inUV;
 }
