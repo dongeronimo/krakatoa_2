@@ -48,6 +48,16 @@ namespace ar {
         LOGI("ARSessionManager::initialize - configuring session...");
         status = m_loader.ArSession_configure(m_session, m_config);
         LOGI("ARSessionManager::initialize - configure returned: %d", status);
+        if (status != AR_SUCCESS) {
+            // Device may not support AR_DEPTH_MODE_AUTOMATIC; fall back to no depth.
+            LOGE("ArSession_configure failed (%d), retrying without depth mode", status);
+            m_loader.ArConfig_setDepthMode(m_session, m_config, AR_DEPTH_MODE_DISABLED);
+            status = m_loader.ArSession_configure(m_session, m_config);
+            if (status != AR_SUCCESS) {
+                LOGE("ArSession_configure failed even without depth: %d", status);
+                return false;
+            }
+        }
 
         LOGI("ARSessionManager::initialize - creating frame...");
         m_loader.ArFrame_create(m_session, &m_frame);
