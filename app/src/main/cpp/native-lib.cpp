@@ -31,6 +31,7 @@
 #include "texture2d.h"
 #include "image_load.h"
 #include <glm/gtc/type_ptr.hpp>
+#include "ar_depth_image.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
@@ -53,6 +54,7 @@ int gDisplayRotation = 0;
 std::unique_ptr<graphics::Renderable> cameraBgQuad = nullptr;
 std::unique_ptr<graphics::Renderable> composeQuad = nullptr;
 std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
+std::unique_ptr<graphics::ArDepthImage> gArDepthImage = nullptr;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -198,6 +200,11 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     //camera feed -> vulkan image (ring buffered, CPU upload, no OES)
     gCameraImage = std::make_unique<graphics::ARCameraImage>(gVkContext->GetDevice(),
                                                               gVkContext->GetAllocator());
+    //create the ar depth buffer object
+    gArDepthImage = std::make_unique<graphics::ArDepthImage>(gVkContext->GetDevice(),
+                                                             gVkContext->GetAllocator(),
+                                                             "ArDepthImage");
+
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -297,7 +304,10 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     int32_t depthStride = 0; std::vector<uint16_t> depthData{};
     gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
     gArSessionManager->releaseDepthImage(depthImageHandle);//must release the image
+    // TODO: Advance ar depth ring buffers
+    gArDepthImage->Advance();
     // TODO: Create or update the current ar depth image in vulkan
+    gArDepthImage->UpdateImage(depthData, {(uint32_t)arDepthWidth, (uint32_t)arDepthHeight});
     // TODO: Run the compute shader to calculate the world position of the things seen by the depth buffer
     // TODO: Run marching cubes to create the geometry for the real world
     ////////////////////////////
