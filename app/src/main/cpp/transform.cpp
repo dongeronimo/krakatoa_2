@@ -200,6 +200,10 @@ namespace graphics {
         // Note que passamos referências para os membros da classe
         glm::decompose(mat, this->scale, this->rotation, this->position, skew, perspective);
 
+        // glm::decompose returns the quaternion conjugated – undo that so
+        // GetLocalMatrix() recomposes the same matrix we received.
+        this->rotation = glm::conjugate(this->rotation);
+
         // Como você usa Euler Angles explicitamente, precisamos atualizar o vetor de graus
         // O decompose retorna o quaternion, então sincronizamos o Euler a partir dele
         UpdateEulerFromQuaternion();
