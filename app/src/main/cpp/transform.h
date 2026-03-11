@@ -75,6 +75,7 @@ namespace graphics {
         glm::vec3 scale = glm::vec3(1.0f);
 
         glm::mat4 worldMatrix = glm::mat4(1.0f);
+        bool useRawMatrix = false; // true when set via SetFromMatrixPtr
     };
 }
 

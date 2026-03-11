@@ -59,6 +59,10 @@ namespace ar {
         /// Access the latest light estimate
         const LightEstimate& getLightEstimate() const { return m_lightData; }
 
+        /// Acquire the current depth image (caller must release via ArImage_release).
+        /// Returns nullptr if depth is not yet available for this frame.
+        ArImage* getDepthImage();
+
         /// Table of available CPU image resolutions, populated during initialize().
         const std::vector<CameraResolution>& getAvailableResolutions() const { return m_resolutions; }
 

@@ -42,9 +42,22 @@ namespace ar {
         LOGI("ARSessionManager::initialize - creating config...");
         m_loader.ArConfig_create(m_session, &m_config);
 
+        // Enable depth estimation so ArFrame_acquireDepthImage16Bits works
+        m_loader.ArConfig_setDepthMode(m_session, m_config, AR_DEPTH_MODE_AUTOMATIC);
+
         LOGI("ARSessionManager::initialize - configuring session...");
         status = m_loader.ArSession_configure(m_session, m_config);
         LOGI("ARSessionManager::initialize - configure returned: %d", status);
+        if (status != AR_SUCCESS) {
+            // Device may not support AR_DEPTH_MODE_AUTOMATIC; fall back to no depth.
+            LOGE("ArSession_configure failed (%d), retrying without depth mode", status);
+            m_loader.ArConfig_setDepthMode(m_session, m_config, AR_DEPTH_MODE_DISABLED);
+            status = m_loader.ArSession_configure(m_session, m_config);
+            if (status != AR_SUCCESS) {
+                LOGE("ArSession_configure failed even without depth: %d", status);
+                return false;
+            }
+        }
 
         LOGI("ARSessionManager::initialize - creating frame...");
         m_loader.ArFrame_create(m_session, &m_frame);
@@ -317,6 +330,17 @@ namespace ar {
         }
 
         return found;
+    }
+
+    ArImage* ARSessionManager::getDepthImage() {
+        ArImage* depthImage = nullptr;
+        ArStatus status = m_loader.ArFrame_acquireDepthImage16Bits(
+                m_session, m_frame, &depthImage);
+        if (status != AR_SUCCESS) {
+            LOGE("ArFrame_acquireDepthImage16Bits failed: %d", status);
+            return nullptr;
+        }
+        return depthImage;
     }
 
     void ARSessionManager::getProjectionMatrix(float nearClip, float farClip, float* outMatrix) {

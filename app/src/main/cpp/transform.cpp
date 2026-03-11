@@ -35,6 +35,9 @@ namespace graphics {
     }
 
     glm::mat4 Transform::GetWorldMatrix() {
+        if (useRawMatrix) {
+            return worldMatrix;
+        }
         if (parent == nullptr) {
             worldMatrix = GetLocalMatrix();
             return worldMatrix;
@@ -190,21 +193,10 @@ namespace graphics {
     void Transform::SetFromMatrixPtr(const float *matrixPtr) {
         if (!matrixPtr) return;
 
-        // Converte o ponteiro de float para uma matriz 4x4 do GLM
-        glm::mat4 mat = glm::make_mat4(matrixPtr);
-
-        glm::vec3 skew;
-        glm::vec4 perspective;
-
-        // Decompõe a matriz
-        // Note que passamos referências para os membros da classe
-        glm::decompose(mat, this->scale, this->rotation, this->position, skew, perspective);
-
-        // Como você usa Euler Angles explicitamente, precisamos atualizar o vetor de graus
-        // O decompose retorna o quaternion, então sincronizamos o Euler a partir dele
-        UpdateEulerFromQuaternion();
-
-        // Opcional: Se sua worldMatrix for cacheada, atualize-a aqui
-        this->worldMatrix = mat;
+        // Store the ARCore matrix directly – avoid decompose/recompose
+        // round-trip which is lossy (glm::decompose quaternion conjugation,
+        // skew/perspective loss, floating-point drift).
+        this->worldMatrix = glm::make_mat4(matrixPtr);
+        this->useRawMatrix = true;
     }
 }

@@ -63,6 +63,7 @@ namespace ar {
             // Config functions
             LOAD_ARCORE_FUNC(ArConfig_create);
             LOAD_ARCORE_FUNC(ArConfig_destroy);
+            LOAD_ARCORE_FUNC(ArConfig_setDepthMode);
 
             // Frame functions
             LOAD_ARCORE_FUNC(ArFrame_create);
@@ -71,6 +72,7 @@ namespace ar {
             LOAD_ARCORE_FUNC(ArFrame_transformCoordinates2d);
             LOAD_ARCORE_FUNC(ArFrame_acquireCamera);
             LOAD_ARCORE_FUNC(ArFrame_acquireCameraImage);
+            LOAD_ARCORE_FUNC(ArFrame_acquireDepthImage16Bits);
 
             // Camera functions
             LOAD_ARCORE_FUNC(ArCamera_getViewMatrix);
@@ -158,6 +160,8 @@ namespace ar {
         // ── Config ──
         ArStatus (*ArConfig_create)(const ArSession* session, ArConfig** out_config) = nullptr;
         void (*ArConfig_destroy)(ArConfig* config) = nullptr;
+        void (*ArConfig_setDepthMode)(const ArSession* session, ArConfig* config,
+                                      ArDepthMode mode) = nullptr;
 
         // ── Frame ──
         ArStatus (*ArFrame_create)(const ArSession* session, ArFrame** out_frame) = nullptr;
@@ -171,6 +175,8 @@ namespace ar {
                                       ArCamera** out_camera) = nullptr;
         ArStatus (*ArFrame_acquireCameraImage)(const ArSession* session, const ArFrame* frame,
                                                ArImage** out_image) = nullptr;
+        ArStatus (*ArFrame_acquireDepthImage16Bits)(const ArSession* session, const ArFrame* frame,
+                                                    ArImage** out_depth_image) = nullptr;
 
         // ── Camera ──
         void (*ArCamera_getViewMatrix)(const ArSession* session, const ArCamera* camera,
