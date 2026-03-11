@@ -410,7 +410,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnPause(JNIEn
     if (gFrameTimer) {
         gFrameTimer->Pause();
     }
-    gArSessionManager->onPause();
+    if (gArSessionManager)
+        gArSessionManager->onPause();
 }
 extern "C"
 JNIEXPORT void JNICALL

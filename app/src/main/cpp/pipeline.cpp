@@ -4,6 +4,7 @@
 #include "vk_debug.h"
 #include "android_log.h"
 #include <cassert>
+#include <cstdlib>
 #include <array>
 #include "renderable.h"
 #include "static_mesh.h"
@@ -753,7 +754,12 @@ PipelineConfig graphics::CameraBackgroundConfig(ARCameraImage* cameraImage,
 
 static std::vector<uint8_t> LoadShaderBytes(const std::string& name) {
     auto filePath = Concatenate("shaders/", name, ".spv");
-    return io::AssetLoader::loadFile(filePath);
+    auto data = io::AssetLoader::loadFile(filePath);
+    if (data.empty()) {
+        LOGE("FATAL: Failed to load shader '%s'. The .spv file is missing or unreadable.", filePath.c_str());
+        std::abort();
+    }
+    return data;
 }
 
 VkShaderModule Pipeline::CreateShaderModule(const std::vector<uint8_t>& data) {
@@ -764,7 +770,10 @@ VkShaderModule Pipeline::CreateShaderModule(const std::vector<uint8_t>& data) {
 
     VkShaderModule shaderModule;
     VkResult result = vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule);
-    assert(result == VK_SUCCESS);
+    if (result != VK_SUCCESS) {
+        LOGE("FATAL: vkCreateShaderModule failed with VkResult %d. Shader data size: %zu bytes.", result, data.size());
+        std::abort();
+    }
     return shaderModule;
 }
 

@@ -1,3 +1,4 @@
+
 #include "ar_manager.h"
 #include "android_log.h"
 #include <cassert>
@@ -51,7 +52,7 @@ namespace ar {
         LOGI("ARSessionManager::initialize - creating config...");
         m_loader.ArConfig_create(m_session, &m_config);
 
-        // Enable depth mode
+        // Enable depth estimation so ArFrame_acquireDepthImage16Bits works
         m_loader.ArConfig_setDepthMode(m_session, m_config, AR_DEPTH_MODE_AUTOMATIC);
 
         LOGI("ARSessionManager::initialize - configuring session...");
