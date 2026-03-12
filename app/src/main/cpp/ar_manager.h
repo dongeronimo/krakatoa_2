@@ -84,7 +84,6 @@ namespace ar {
 
         void getViewMatrix(float* outMatrix);
         void getProjectionMatrix(float nearClip, float farClip, float* outMatrix);
-        ArImage* getDepthImage();
         void getDepthImageDimensions(ArImage* image, int32_t& w, int32_t& h);
         void getDepthImageData(ArImage* image, std::vector<uint16_t>& data, int32_t& stride);
         void releaseDepthImage(ArImage* image);

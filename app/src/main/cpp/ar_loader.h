@@ -304,7 +304,7 @@ namespace ar {
         void (*ArFrame_getLightEstimate)(const ArSession* session,
                                          const ArFrame* frame,
                                          ArLightEstimate* out_light_estimate) = nullptr;
-        ArStatus (*ArFrame_acquireDepthImage16Bits)(const ArSession*, const ArFrame*, ArImage**) = nullptr;
+
         ArStatus (*ArFrame_acquireDepthImage)(const ArSession*, const ArFrame*, ArImage**) = nullptr;
         ArStatus (*ArFrame_acquireRawDepthImage16Bits)(const ArSession*, const ArFrame*, ArImage**) = nullptr;
         ArStatus (*ArFrame_acquireRawDepthConfidenceImage)(const ArSession*, const ArFrame*, ArImage**) = nullptr;
@@ -320,7 +320,6 @@ namespace ar {
                                                      float* out_cx, float* out_cy) = nullptr;
         void (*ArCameraIntrinsics_getImageDimensions)(const ArSession*, const ArCameraIntrinsics*,
                                                       int32_t* out_w, int32_t* out_h) = nullptr;
-        void (*ArConfig_setDepthMode)(const ArSession*, ArConfig*, ArDepthMode) = nullptr;
         void (*ArConfig_getDepthMode)(const ArSession*, const ArConfig*, ArDepthMode*) = nullptr;
         ArStatus (*ArSession_isDepthModeSupported)(const ArSession*, ArDepthMode, int32_t* out) = nullptr;
 

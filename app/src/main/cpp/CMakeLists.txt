@@ -124,6 +124,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         image_load.h
         ar_depth_image.cpp
         ar_depth_image.h
+        compute_pipeline.cpp
+        compute_pipeline.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
