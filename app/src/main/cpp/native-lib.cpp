@@ -32,6 +32,8 @@
 #include "image_load.h"
 #include <glm/gtc/type_ptr.hpp>
 #include "ar_depth_image.h"
+#include "compute_pipeline.h"
+#include "depth_deprojection_config.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
@@ -55,6 +57,8 @@ std::unique_ptr<graphics::Renderable> cameraBgQuad = nullptr;
 std::unique_ptr<graphics::Renderable> composeQuad = nullptr;
 std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
 std::unique_ptr<graphics::ArDepthImage> gArDepthImage = nullptr;
+std::unique_ptr<graphics::ComputePipeline> gDeprojectionPipeline = nullptr;
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -133,6 +137,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .AddDescriptorSetLayout(composeDescriptorSetLayout)
             .Build();
     pipelineLayouts.insert({"compose", composePipelineLayout});
+    // Depth deprojection compute pipeline.
+    auto deprojectDescriptorSetLayout = graphics::DepthDeprojectionDescriptorSetLayout(gVkContext->GetDevice());
+    descriptorSetLayouts.insert({"compute_depth_deprojection", deprojectDescriptorSetLayout});
+    auto deprojectPipelineLayout = graphics::DepthDeprojectionPipelineLayout(gVkContext->GetDevice(), deprojectDescriptorSetLayout);
+    pipelineLayouts.insert({"compute_depth_deprojection", deprojectPipelineLayout});
+
     ANativeWindow_release(window);
     //Creates the command pool manager
     gCommandPoolManager = std::make_unique<graphics::CommandPoolManager>(gVkContext->GetDevice(),
@@ -204,7 +214,22 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     gArDepthImage = std::make_unique<graphics::ArDepthImage>(gVkContext->GetDevice(),
                                                              gVkContext->GetAllocator(),
                                                              "ArDepthImage");
-
+    //TODO deprojection: i can't create the deprojection config like this here because i don't have the depth buffers, they'll be set in the main loop
+    //TODO deprojection: i can't have the width and height of the depth buffer because they are unknown here, i only know them in the main loop.
+    //TODO deprojection: define the deprojectoin pipeline layout
+    //TODO deprojection: define the deprojection descriptor set layout.
+    graphics::ComputePipelineConfig deprojectionConfig = graphics::DepthDeprojectConfig(
+            cameraIntrinsicsBuffer,
+            depthSSBO,
+            outoutpuSSBO,
+            depthWidth,
+            depthHeight
+            );
+    gDeprojectionPipeline = std::make_unique<graphics::ComputePipeline>(gVkContext->GetDevice(),
+                                                                        gVkContext->GetAllocator(),
+                                                                        deprojectionConfig,
+                                                                        deprojectPipelineLayout,
+                                                                        deprojectDescriptorSetLayout);
 }
 extern "C"
 JNIEXPORT void JNICALL

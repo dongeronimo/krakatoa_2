@@ -4,7 +4,9 @@
 #include <string>
 #include <functional>
 #include <vector>
+#include "ring_buffer.h"
 #include "vk_mem_alloc.h"
+#define MAX_COMPUTE_DESCRIPTOR_SETS 4096
 namespace graphics {
     class ComputePipeline;
     /**
@@ -32,6 +34,7 @@ namespace graphics {
                         const ComputePipelineConfig& config,
                         VkPipelineLayout pipelineLayout,
                         VkDescriptorSetLayout descriptorSetLayout);
+        ~ComputePipeline();
         // Non-copyable
         ComputePipeline(const ComputePipeline&) = delete;
         ComputePipeline& operator=(const ComputePipeline&) = delete;
@@ -39,7 +42,10 @@ namespace graphics {
         * Binds the pipeline, that's before we draw.
         * */
         void Bind(VkCommandBuffer cmd) const;
-        void Dispatch(VkCommandBuffer cmd, uint32_t x, uint32_t y, uint32_t z) const;
+        void Dispatch(VkCommandBuffer cmd, uint32_t frameIndex);
+        VkDescriptorSet GetDescriptorSet(uint32_t frameIndex) const;
+        void DispatchRaw(VkCommandBuffer cmd,
+                                         uint32_t x, uint32_t y, uint32_t z) const;
         VkDescriptorSet    AllocateDescriptorSet();
         VkPipeline GetPipeline() const { return pipeline; }
         VkDevice GetDevice() const {return device;}
@@ -47,12 +53,46 @@ namespace graphics {
         VkPipelineLayout GetPipelineLayout()const {return pipelineLayout;}
 
     private:
+        /**
+         * Vk device, not owned by the device
+         * */
         VkDevice device = VK_NULL_HANDLE;
+        /**
+         * Vma allocator. Not owned by this class.
+         * */
         VmaAllocator allocator = VK_NULL_HANDLE;
+        /**
+         * Vulkan pipeline object, owned by the compute pipeline
+         * */
         VkPipeline pipeline = VK_NULL_HANDLE;
+        /**
+         * Varies from pipeline to pipeline
+         * */
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+        /**
+         * Varies from pipeline to pipeline
+         * */
         VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
+        /**
+         * Each specific pipeline has it's own descriptor pool, created in the constructor,
+         * with the size specified at ComputePipelineConfig.
+         * */
         VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+        /**
+         * Compute behaves differently from graphics pipeline. While the graphics
+         * pipeline manages descriptor sets per-renderable that doesn't happen with
+         * compute, they are pre-allocated in the case of compute.
+         * */
+        utils::RingBuffer<VkDescriptorSet> descriptorSets;
+        /**
+         * The callback comes from the config.
+         * */
+        std::function<void(VkCommandBuffer, ComputePipeline&, uint32_t)> dispatchCallback;
+        /**
+         * Helper function to create the shader module for compute.
+         * */
+        VkShaderModule CreateShaderModule(const std::vector<uint8_t>& data);
+
     };
 }
 

@@ -26,7 +26,6 @@ layout (set = 0, binding = 0) buffer UBO {
     float fy; //Focal length in px
     float cx; //Principal point
     float cy; //Principal point
-    uint16_t data[]; //Depth buffer
 } ubo;
 
 // Buffer 1: the depth data
@@ -37,8 +36,13 @@ layout(set = 0, binding = 1) buffer DepthBuffer {
 // Buffer 2: output world positions
 layout(set = 0, binding = 2) buffer OutputBuffer {
     vec4 positions[];
-} output;
+} outBuffer;
 
+layout (push_constant) uniform Dimensions {
+    mat4 viewInverse; //I need that to go from camera space to world space
+    uint width;
+    uint height;
+} pc;
 layout(local_size_x = 16, local_size_y = 16) in;
 
 void main() {
@@ -47,15 +51,16 @@ void main() {
     uint v = coord.y;
 
     // Bounds check
-    if (u >= ubo.width || v >= ubo.height) return;
-
-    uint index = v * ubo.width + u;
+    if (u >= pc.width || v >= pc.height) return;
+    // Mind that because there will be a point for each pixel the output buffer should have
+    // a size = width * height.
+    uint index = v * pc.width + u;
 
     // Read and convert depth (ARCore uint16 is in millimeters)
     float depth = float(uint(depthBuffer.data[index])) / 1000.0;
 
     if (depth <= 0.0) {
-        output.positions[index] = vec4(0.0);
+        outBuffer.positions[index] = vec4(0.0);
         return;
     }
 
@@ -64,5 +69,7 @@ void main() {
     float y_cam = (float(v) - ubo.cy) / ubo.fy * depth;
     float z_cam = -depth;
 
-    output.positions[index] = vec4(x_cam, y_cam, z_cam, 1.0);
+    vec4 p_cam = vec4(x_cam, y_cam, z_cam, 1.0);
+    // Camera space → world space
+    outBuffer.positions[index] = pc.viewInverse * p_cam;
 }
