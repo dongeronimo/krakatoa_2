@@ -98,10 +98,10 @@ void ComputePipeline::Bind(VkCommandBuffer cmd) const {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 }
 
-void ComputePipeline::Dispatch(VkCommandBuffer cmd, uint32_t frameIndex) {
+void ComputePipeline::Dispatch(VkCommandBuffer cmd, uint32_t frameIndex, CDO& cdo) {
     assert(dispatchCallback);
     Bind(cmd);
-    dispatchCallback(cmd, *this, frameIndex);
+    dispatchCallback(cmd, *this, frameIndex, cdo);
     descriptorSets.Next();
 }
 

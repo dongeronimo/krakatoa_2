@@ -6,6 +6,7 @@
 #include <vector>
 #include "ring_buffer.h"
 #include "vk_mem_alloc.h"
+#include "CDO.h"
 #define MAX_COMPUTE_DESCRIPTOR_SETS 4096
 namespace graphics {
     class ComputePipeline;
@@ -21,7 +22,8 @@ namespace graphics {
         // Called every dispatch — bind descriptors, push constants, call vkCmdDispatch
         std::function<void(VkCommandBuffer cmd,
                            ComputePipeline& pipeline,
-                           uint32_t frameIndex)> dispatchCallback;
+                           uint32_t frameIndex,
+                           CDO& cdo)> dispatchCallback;
     };
     /**
      * I have to separate the compute pipelines from the graphic pipelines (Pipeline) because
@@ -42,7 +44,7 @@ namespace graphics {
         * Binds the pipeline, that's before we draw.
         * */
         void Bind(VkCommandBuffer cmd) const;
-        void Dispatch(VkCommandBuffer cmd, uint32_t frameIndex);
+        void Dispatch(VkCommandBuffer cmd, uint32_t frameIndex, CDO& cdo);
         VkDescriptorSet GetDescriptorSet(uint32_t frameIndex) const;
         void DispatchRaw(VkCommandBuffer cmd,
                                          uint32_t x, uint32_t y, uint32_t z) const;
@@ -87,7 +89,7 @@ namespace graphics {
         /**
          * The callback comes from the config.
          * */
-        std::function<void(VkCommandBuffer, ComputePipeline&, uint32_t)> dispatchCallback;
+        std::function<void(VkCommandBuffer, ComputePipeline&, uint32_t, CDO& cdo)> dispatchCallback;
         /**
          * Helper function to create the shader module for compute.
          * */

@@ -34,6 +34,8 @@
 #include "ar_depth_image.h"
 #include "compute_pipeline.h"
 #include "depth_deprojection_config.h"
+#include "CDO.h"
+#include "vk_debug.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
@@ -58,7 +60,7 @@ std::unique_ptr<graphics::Renderable> composeQuad = nullptr;
 std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
 std::unique_ptr<graphics::ArDepthImage> gArDepthImage = nullptr;
 std::unique_ptr<graphics::ComputePipeline> gDeprojectionPipeline = nullptr;
-
+std::unique_ptr<graphics::DepthDeprojectionOutput> gDepthDeprojectionOutput = nullptr;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -214,22 +216,15 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     gArDepthImage = std::make_unique<graphics::ArDepthImage>(gVkContext->GetDevice(),
                                                              gVkContext->GetAllocator(),
                                                              "ArDepthImage");
-    //TODO deprojection: i can't create the deprojection config like this here because i don't have the depth buffers, they'll be set in the main loop
-    //TODO deprojection: i can't have the width and height of the depth buffer because they are unknown here, i only know them in the main loop.
-    //TODO deprojection: define the deprojectoin pipeline layout
-    //TODO deprojection: define the deprojection descriptor set layout.
-    graphics::ComputePipelineConfig deprojectionConfig = graphics::DepthDeprojectConfig(
-            cameraIntrinsicsBuffer,
-            depthSSBO,
-            outoutpuSSBO,
-            depthWidth,
-            depthHeight
-            );
+    // create the deprojection compute shader pipeline
+    graphics::ComputePipelineConfig deprojectionConfig = graphics::DepthDeprojectConfig();
     gDeprojectionPipeline = std::make_unique<graphics::ComputePipeline>(gVkContext->GetDevice(),
                                                                         gVkContext->GetAllocator(),
                                                                         deprojectionConfig,
                                                                         deprojectPipelineLayout,
                                                                         deprojectDescriptorSetLayout);
+    // create the output object for deprojection - still need to create the actual buffers once i know the size of the depth buffer
+    gDepthDeprojectionOutput = std::make_unique<graphics::DepthDeprojectionOutput>();
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -285,7 +280,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceDest
     vkDeviceWaitIdle(gVkContext->GetDevice());
     gMeshes.clear();
 }
-
+int32_t previousArDepthWidth = 0;
 extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(JNIEnv *env,
@@ -319,22 +314,64 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gCommandPoolManager->BeginFrame();
     VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
     const uint32_t frameIndex = gVkContext->GetFrameIndex();
+    // TODO refactor: move all this volume building shit to some kind of subsystem to clean up the main loop
     /////////////////////////////
     // get the ar depth image handle in arcore
     ArImage* depthImageHandle = gArSessionManager->getDepthImage();
     // get the depth image dimensions
     int32_t arDepthWidth = 0; int32_t arDepthHeight = 0;
     gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
+    if(previousArDepthWidth == 0) {
+        previousArDepthWidth = arDepthWidth;
+        //TODO deproject (done): Create the output ring buffer. Size = vec4 * arDepthWidth * arDepthHeight
+        assert(gDepthDeprojectionOutput);
+        size_t sizeInBytes = arDepthHeight * arDepthWidth * sizeof(float) * 4;
+        for(int i=0; i<MAX_FRAMES_IN_FLIGHT; i++){
+            //TODO deproject (done): create the output buffer
+            VkBufferCreateInfo bufferInfo{};
+            bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            bufferInfo.size = sizeInBytes;
+            bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;  // for compute read/write
+            VmaAllocationCreateInfo allocInfo{};
+            allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+            VkBuffer buffer;
+            VmaAllocation allocation;
+            vmaCreateBuffer(gVkContext->GetAllocator(),
+                            &bufferInfo, &allocInfo,
+                            &buffer, &allocation, nullptr);
+            //TODO deproject (done): put in the ring buffer
+            gDepthDeprojectionOutput->outputBuffer[i] = buffer;
+            gDepthDeprojectionOutput->outputBufferAllocation[i] = allocation;
+            gDepthDeprojectionOutput->outputBufferSize[i] = sizeInBytes;
+            //TODO deproject (done): advance the ring buffers
+            gDepthDeprojectionOutput->outputBuffer.Next();
+            gDepthDeprojectionOutput->outputBufferAllocation.Next();
+            gDepthDeprojectionOutput->outputBufferSize.Next();
+            //TODO deproject (done): name the things
+            graphics::debug::SetBufferName(gVkContext->GetDevice(),
+                                           gDepthDeprojectionOutput->outputBuffer[i],
+                                           Concatenate("DepthDeprojectOutput ", i));
+        }
+    }
+    else
+        assert(previousArDepthWidth == arDepthWidth);// I can't deal with changing depth buffer size right now, it breaks the output of the deproject compute shader
     // get the image data
     int32_t depthStride = 0; std::vector<uint16_t> depthData{};
     gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
     gArSessionManager->releaseDepthImage(depthImageHandle);//must release the image
-    // TODO: Advance ar depth ring buffers
+    // TODO deproject (done): Advance ar depth ring buffers
     gArDepthImage->Advance();
-    // TODO: Create or update the current ar depth image in vulkan
+    // TODO deproject (done): Create or update the current ar depth image in vulkan
     gArDepthImage->UpdateImage(depthData, {(uint32_t)arDepthWidth, (uint32_t)arDepthHeight});
-    // TODO: Run the compute shader to calculate the world position of the things seen by the depth buffer
-    // TODO: Run marching cubes to create the geometry for the real world
+    // TODO deproject (done): bind the compute shader for deprojection
+    gDeprojectionPipeline->Bind(cmd);
+    // TODO deproject: update the uniforms using the CDO
+    graphics::CDO deprojectCDO;
+    // TODO deproject: dispatch the execution
+    gDeprojectionPipeline->Dispatch(cmd, frameIndex, deprojectCDO);
+    // TODO volume builder: take the deproject result and put the world coordinate vertexes in 1cm boxes held in a texture 3d
+    // TODO marching cubes: Run marching cubes to create the geometry for the real world using the 3d texture from volume builder
+
     ////////////////////////////
     // Update AR planes
     UpdateARPlanes();

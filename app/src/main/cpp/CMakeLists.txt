@@ -128,6 +128,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         compute_pipeline.h
         depth_deprojection_config.cpp
         depth_deprojection_config.h
+        CDO.h
+        cdo.cpp
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore

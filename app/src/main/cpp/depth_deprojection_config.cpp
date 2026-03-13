@@ -1,10 +1,10 @@
 #include "depth_deprojection_config.h"
 #include <array>
+#include "CDO.h"
 using namespace graphics;
 
 ComputePipelineConfig
-DepthDeprojectConfig(VkBuffer intrinsicsUBO, VkBuffer depthSSBO, VkBuffer outputSSBO,
-                     uint32_t width, uint32_t height) {
+DepthDeprojectConfig() {
     ComputePipelineConfig config;
     config.shaderName = "depth_deproject";
     config.descriptorPoolSizes = {
@@ -13,45 +13,47 @@ DepthDeprojectConfig(VkBuffer intrinsicsUBO, VkBuffer depthSSBO, VkBuffer output
     };
     config.dispatchCallback = [=](VkCommandBuffer cmd,
                                   ComputePipeline& pipeline,
-                                  uint32_t frameIndex) {
-        VkDescriptorSet ds = pipeline.GetDescriptorSet(frameIndex);
-        // binding 0 — intrinsics UBO
-        VkDescriptorBufferInfo uboInfo{};
-        uboInfo.buffer = intrinsicsUBO;
-        uboInfo.offset = 0;
-        uboInfo.range  = VK_WHOLE_SIZE;
-
-        // binding 1 — depth SSBO
-        VkDescriptorBufferInfo depthInfo{};
-        depthInfo.buffer = depthSSBO;
-        depthInfo.offset = 0;
-        depthInfo.range  = VK_WHOLE_SIZE;
-
-        // binding 2 — output SSBO
-        VkDescriptorBufferInfo outInfo{};
-        outInfo.buffer = outputSSBO;
-        outInfo.offset = 0;
-        outInfo.range  = VK_WHOLE_SIZE;
-        VkWriteDescriptorSet writes[3]{};
-        writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
-                     ds, 0, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                     nullptr, &uboInfo, nullptr};
-        writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
-                     ds, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                     nullptr, &depthInfo, nullptr};
-        writes[2] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
-                     ds, 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                     nullptr, &outInfo, nullptr};
-
-        vkUpdateDescriptorSets(pipeline.GetDevice(), 3, writes, 0, nullptr);
-
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                pipeline.GetPipelineLayout(), 0, 1, &ds, 0, nullptr);
-
-        pipeline.DispatchRaw(cmd,
-                             (width  + 15) / 16,
-                             (height + 15) / 16,
-                             1);
+                                  uint32_t frameIndex,
+                                  CDO& cdo) {
+        //TODO deprojection: update the descriptor sets with new data
+//        VkDescriptorSet ds = pipeline.GetDescriptorSet(frameIndex);
+//        // binding 0 — intrinsics UBO
+//        VkDescriptorBufferInfo uboInfo{};
+//        uboInfo.buffer = intrinsicsUBO;
+//        uboInfo.offset = 0;
+//        uboInfo.range  = VK_WHOLE_SIZE;
+//
+//        // binding 1 — depth SSBO
+//        VkDescriptorBufferInfo depthInfo{};
+//        depthInfo.buffer = depthSSBO;
+//        depthInfo.offset = 0;
+//        depthInfo.range  = VK_WHOLE_SIZE;
+//
+//        // binding 2 — output SSBO
+//        VkDescriptorBufferInfo outInfo{};
+//        outInfo.buffer = outputSSBO;
+//        outInfo.offset = 0;
+//        outInfo.range  = VK_WHOLE_SIZE;
+//        VkWriteDescriptorSet writes[3]{};
+//        writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
+//                     ds, 0, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+//                     nullptr, &uboInfo, nullptr};
+//        writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
+//                     ds, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+//                     nullptr, &depthInfo, nullptr};
+//        writes[2] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
+//                     ds, 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+//                     nullptr, &outInfo, nullptr};
+//
+//        vkUpdateDescriptorSets(pipeline.GetDevice(), 3, writes, 0, nullptr);
+//
+//        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+//                                pipeline.GetPipelineLayout(), 0, 1, &ds, 0, nullptr);
+//
+//        pipeline.DispatchRaw(cmd,
+//                             (width  + 15) / 16,
+//                             (height + 15) / 16,
+//                             1);
     };
     return config;
 }
