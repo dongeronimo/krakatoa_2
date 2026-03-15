@@ -406,6 +406,19 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     deprojectCDO.Add(graphics::CDO::Keys::view_inverse, viewInvArray);
     // Dispatch the deprojection compute shader
     gDeprojectionPipeline->Dispatch(cmd, frameIndex, deprojectCDO);
+    // Memory barrier: ensure compute shader writes to output SSBO are visible
+    // before any subsequent reads (next compute pass or vertex shader).
+    VkMemoryBarrier computeBarrier{};
+    computeBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    computeBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    computeBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                         0,
+                         1, &computeBarrier,
+                         0, nullptr,
+                         0, nullptr);
     // TODO volume builder: take the deproject result and put the world coordinate vertexes in 1cm boxes held in a texture 3d
     // TODO marching cubes: Run marching cubes to create the geometry for the real world using the 3d texture from volume builder
 
