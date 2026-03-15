@@ -4,13 +4,14 @@
 #include "compute_pipeline.h"
 #include <vector>
 #include "ring_buffer.h"
+#include "vk_mem_alloc.h"
 namespace graphics {
     VkPipelineLayout  DepthDeprojectionPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout);
     VkDescriptorSetLayout DepthDeprojectionDescriptorSetLayout(VkDevice device);
     /**
      * Creates the config for the depth deprojection compute pipeline.
      * */
-    ComputePipelineConfig DepthDeprojectConfig();
+    ComputePipelineConfig DepthDeprojectConfig(VmaAllocator allocator);
 
     struct DepthDeprojectionOutput {
         utils::RingBuffer<VkBuffer> outputBuffer;

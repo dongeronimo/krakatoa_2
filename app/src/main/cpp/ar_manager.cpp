@@ -461,4 +461,31 @@ namespace ar {
     void ARSessionManager::releaseDepthImage(ArImage* image) {
         m_loader.ArImage_release(image);
     }
+
+    void ARSessionManager::getCameraIntrinsics(ArDepthIntrinsics& out_intrinsics) {
+        //TODO deproject (done): get the camera
+        ArCamera* camera;
+        m_loader.ArFrame_acquireCamera(m_session, m_frame, &camera);
+        //TODO deproject (done): get the properties
+        ArCameraIntrinsics* intrinsics;
+        m_loader.ArCameraIntrinsics_create(m_session, &intrinsics);
+        m_loader.ArCamera_getImageIntrinsics(m_session, camera, intrinsics);
+        float out_fx, out_fy;
+        float out_cx, out_cy;
+        int32_t out_w, out_h;
+        m_loader.ArCameraIntrinsics_getFocalLength(m_session, intrinsics, &out_fx, &out_fy);
+        m_loader.ArCameraIntrinsics_getPrincipalPoint(m_session, intrinsics, &out_cx, &out_cy);
+        m_loader.ArCameraIntrinsics_getImageDimensions(m_session, intrinsics, &out_w, &out_h);
+        //TODO deproject (done): release the intrinsics
+        m_loader.ArCameraIntrinsics_destroy(intrinsics);
+        //TODO deproject (done): release the camera
+        m_loader.ArCamera_release(camera);
+        //TODO deproject (done): return the values
+        out_intrinsics.fx = out_fx;
+        out_intrinsics.fy = out_fy;
+        out_intrinsics.cx = out_cx;
+        out_intrinsics.cy = out_cy;
+        out_intrinsics.w = out_w;
+        out_intrinsics.h = out_h;
+    }
 }

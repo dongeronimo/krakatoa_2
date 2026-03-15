@@ -53,8 +53,29 @@ namespace graphics {
         VkDevice GetDevice() const {return device;}
         VmaAllocator GetAllocator()const {return allocator;}
         VkPipelineLayout GetPipelineLayout()const {return pipelineLayout;}
-
+        /**
+         * Store a buffer in the pipleine object, that'll own it
+         * */
+        void AddBuffer(const std::string& id, VkBuffer buffer, VmaAllocation allocation, void* mappedMemory = nullptr){
+            storedBuffers.insert({id, buffer});
+            storedAllocations.insert({id, allocation});
+            if(mappedMemory)
+                storedMaps.insert({id, mappedMemory});
+        }
+        /**
+         * Do i have this buffer?
+         * */
+        bool HasBuffer(const std::string& id) const {
+            return storedBuffers.count(id) > 0;
+        }
     private:
+        /**
+         * I own these buffers, they are stored at the compute pipeline to have a permanent and
+         * logically reasonable place for them to be. The same for the allocations and memory maps
+         * */
+        std::unordered_map<std::string, VkBuffer> storedBuffers;
+        std::unordered_map<std::string, VmaAllocation > storedAllocations;
+        std::unordered_map<std::string, void*> storedMaps;
         /**
          * Vk device, not owned by the device
          * */

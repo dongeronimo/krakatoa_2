@@ -1,21 +1,96 @@
 #include "depth_deprojection_config.h"
 #include <array>
 #include "CDO.h"
-using namespace graphics;
+#include "vk_debug.h"
+#include "concatenate.h"
 
-ComputePipelineConfig
-DepthDeprojectConfig() {
+using namespace graphics;
+/**
+ * Type of the intrinsics buffer
+ * */
+struct IntrinsicsUbo_t {
+    float fx;
+    float fy;
+    float cx;
+    float cy;
+};
+
+ComputePipelineConfig graphics::DepthDeprojectConfig(VmaAllocator allocator) {
+    //TODO deprojection: create the descriptor sets
+
     ComputePipelineConfig config;
     config.shaderName = "depth_deproject";
     config.descriptorPoolSizes = {
             {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,  MAX_FRAMES_IN_FLIGHT},
             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,  MAX_FRAMES_IN_FLIGHT * 2},
     };
+
     config.dispatchCallback = [=](VkCommandBuffer cmd,
                                   ComputePipeline& pipeline,
                                   uint32_t frameIndex,
                                   CDO& cdo) {
-        //TODO deprojection: update the descriptor sets with new data
+        if(pipeline.HasBuffer("depth_deprojection_intrinsics_0")) {
+            //Create the things here
+            for(int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
+                     z d//                VkBufferCreateInfo bufferInfo{};
+//                bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+//                bufferInfo.size  = sizeof(IntrinsicsUbo_t);
+//                bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+//
+//                VmaAllocationCreateInfo allocInfo{};
+//                allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+//                allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
+//                          | VMA_ALLOCATION_CREATE_MAPPED_BIT; // persistent mapping
+//
+//                VmaAllocationInfo allocResult{};
+//                VkBuffer intrinsicsBuffer;
+//                VmaAllocation intrinsicsAllocation;
+//                vmaCreateBuffer(allocator, &bufferInfo, &allocInfo, &intrinsicsBuffer, &intrinsicsAllocation, &allocResult);
+//                void* intrinsicsMappedPtr = allocResult.pMappedData; // always valid, no need to map/unmap
+//                auto b_n = Concatenate("depth_deprojection_intrinsics_", i);
+//                pipeline.AddBuffer(b_n,intrinsicsBuffer, intrinsicsAllocation, intrinsicsMappedPtr);
+            }
+        }
+//        //TODO deprojection: if the buffers werent created yet, create them
+//        if(pipeline.HasBuffer("depth_deprojection_intrinsics_0"))
+//        {
+//            //TODO deprojection: create the intrinsics buffer, it's map, etc...;
+//            for(int i=0; i<MAX_FRAMES_IN_FLIGHT; i++){
+//                /* I have to lazily create the buffers because it's only here, now that I have
+//                 * enough data to do so.*/
+//                //TODO deprojection: create the buffer for the intrinsics
+//                VkBufferCreateInfo bufferInfo{};
+//                bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+//                bufferInfo.size  = sizeof(IntrinsicsUbo_t);
+//                bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+//
+//                VmaAllocationCreateInfo allocInfo{};
+//                allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+//                allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
+//                          | VMA_ALLOCATION_CREATE_MAPPED_BIT; // persistent mapping
+//
+//                VmaAllocationInfo allocResult{};
+//                VkBuffer intrinsicsBuffer;
+//                VmaAllocation intrinsicsAllocation;
+//                vmaCreateBuffer(allocator, &bufferInfo, &allocInfo, &intrinsicsBuffer, &intrinsicsAllocation, &allocResult);
+//                void* intrinsicsMappedPtr = allocResult.pMappedData; // always valid, no need to map/unmap
+//                auto b_n = Concatenate("depth_deprojection_intrinsics_", i);
+//                pipeline.AddBuffer(b_n,intrinsicsBuffer, intrinsicsAllocation, intrinsicsMappedPtr);
+//                //TODO deprojection: update info for the intrinsics descriptor set
+//                VkDescriptorSet ds = pipeline.GetDescriptorSet(i);
+//                // binding 0 — intrinsics UBO
+//                VkDescriptorBufferInfo uboInfo{};
+//                uboInfo.buffer = intrinsicsBuffer;
+//                uboInfo.offset = 0;
+//                uboInfo.range  = VK_WHOLE_SIZE;
+//                //TODO deprojection: update info for the depth buffer
+//                VkDescriptorBufferInfo depthInfo{};
+//                depthInfo.buffer = ???;
+//                depthInfo.offset = 0;
+//                depthInfo.range = VK_WHOLE_SIZE;
+//            }
+//        }
+//        //TODO deprojection: update the descriptor sets with new data
 //        VkDescriptorSet ds = pipeline.GetDescriptorSet(frameIndex);
 //        // binding 0 — intrinsics UBO
 //        VkDescriptorBufferInfo uboInfo{};

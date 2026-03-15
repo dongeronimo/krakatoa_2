@@ -216,13 +216,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     gArDepthImage = std::make_unique<graphics::ArDepthImage>(gVkContext->GetDevice(),
                                                              gVkContext->GetAllocator(),
                                                              "ArDepthImage");
-    // create the deprojection compute shader pipeline
-    graphics::ComputePipelineConfig deprojectionConfig = graphics::DepthDeprojectConfig();
-    gDeprojectionPipeline = std::make_unique<graphics::ComputePipeline>(gVkContext->GetDevice(),
-                                                                        gVkContext->GetAllocator(),
-                                                                        deprojectionConfig,
-                                                                        deprojectPipelineLayout,
-                                                                        deprojectDescriptorSetLayout);
+
     // create the output object for deprojection - still need to create the actual buffers once i know the size of the depth buffer
     gDepthDeprojectionOutput = std::make_unique<graphics::DepthDeprojectionOutput>();
 }
@@ -322,6 +316,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     int32_t arDepthWidth = 0; int32_t arDepthHeight = 0;
     gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
     if(previousArDepthWidth == 0) {
+        assert(gDeprojectionPipeline == nullptr);
         previousArDepthWidth = arDepthWidth;
         //TODO deproject (done): Create the output ring buffer. Size = vec4 * arDepthWidth * arDepthHeight
         assert(gDepthDeprojectionOutput);
@@ -353,8 +348,28 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                                            Concatenate("DepthDeprojectOutput ", i));
         }
     }
-    else
-        assert(previousArDepthWidth == arDepthWidth);// I can't deal with changing depth buffer size right now, it breaks the output of the deproject compute shader
+    else {
+        assert(previousArDepthWidth ==
+               arDepthWidth);// I can't deal with changing depth buffer size right now, it breaks the output of the deproject compute shader
+    }
+    /**
+    * Aqui eu tenho:
+    * - as intrinsicas
+    * - os depth buffers
+    * Falta criar:
+    * - os output buffer
+    * O melhor lugar pra instanciar a pipeline é aqui. Ela tem que ser criada lazily.
+    * */
+    // create the deprojection compute shader pipeline, lazily, because thats the moment i have enough data to do so
+    if(gDeprojectionPipeline == nullptr) {
+        graphics::ComputePipelineConfig deprojectionConfig = graphics::DepthDeprojectConfig(
+                gVkContext->GetAllocator());
+        gDeprojectionPipeline = std::make_unique<graphics::ComputePipeline>(gVkContext->GetDevice(),
+                                                                            gVkContext->GetAllocator(),
+                                                                            deprojectionConfig,
+                                                                            pipelineLayouts["compute_depth_deprojection"],
+                                                                            descriptorSetLayouts["compute_depth_deprojection"]);
+    }
     // get the image data
     int32_t depthStride = 0; std::vector<uint16_t> depthData{};
     gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
@@ -365,8 +380,17 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gArDepthImage->UpdateImage(depthData, {(uint32_t)arDepthWidth, (uint32_t)arDepthHeight});
     // TODO deproject (done): bind the compute shader for deprojection
     gDeprojectionPipeline->Bind(cmd);
+    // TODO deproject (done): Get the intrinsics
+    ar::ArDepthIntrinsics arDepthIntrinsics{};
+    gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
     // TODO deproject: update the uniforms using the CDO
     graphics::CDO deprojectCDO;
+    deprojectCDO.Add(graphics::CDO::Keys::fx, arDepthIntrinsics.fx);
+    deprojectCDO.Add(graphics::CDO::Keys::fy, arDepthIntrinsics.fy);
+    deprojectCDO.Add(graphics::CDO::Keys::cx, arDepthIntrinsics.cx);
+    deprojectCDO.Add(graphics::CDO::Keys::cy, arDepthIntrinsics.cy);
+    deprojectCDO.Add(graphics::CDO::Keys::width, arDepthIntrinsics.w);
+    deprojectCDO.Add(graphics::CDO::Keys::height, arDepthIntrinsics.h);
     // TODO deproject: dispatch the execution
     gDeprojectionPipeline->Dispatch(cmd, frameIndex, deprojectCDO);
     // TODO volume builder: take the deproject result and put the world coordinate vertexes in 1cm boxes held in a texture 3d

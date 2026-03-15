@@ -7,7 +7,14 @@
 #include <vector>
 
 namespace ar {
-
+    struct ArDepthIntrinsics {
+        float fx;
+        float fy;
+        float cx;
+        float cy;
+        int32_t w;
+        int32_t h;
+    };
     /// Raw YUV camera frame data (CPU-side, no GL_TEXTURE_EXTERNAL_OES)
     struct CameraFrame {
         const uint8_t* yPlane = nullptr;
@@ -87,6 +94,8 @@ namespace ar {
         void getDepthImageDimensions(ArImage* image, int32_t& w, int32_t& h);
         void getDepthImageData(ArImage* image, std::vector<uint16_t>& data, int32_t& stride);
         void releaseDepthImage(ArImage* image);
+
+        void getCameraIntrinsics(ArDepthIntrinsics& out_intrinsics);
     private:
         void queryAvailableResolutions();
         void releaseCameraImage();
