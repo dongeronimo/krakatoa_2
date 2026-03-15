@@ -70,6 +70,9 @@ std::unique_ptr<graphics::ComputePipeline> gVoxelizationPipeline = nullptr;
 std::unique_ptr<graphics::VoxelVolume> gVoxelVolume = nullptr;
 std::unique_ptr<graphics::ComputePipeline> gMarchingCubesPipeline = nullptr;
 std::unique_ptr<graphics::GpuMesh> gWorldMesh = nullptr;
+std::unique_ptr<graphics::Texture2D> gMeshTexture = nullptr;
+std::unique_ptr<graphics::Pipeline> gWorldMeshPipeline = nullptr;
+std::unique_ptr<graphics::Renderable> gWorldMeshRenderable = nullptr;
 // Marching cubes output capacity — 5M triangles max (15M vertices, 15M indices)
 static constexpr uint32_t MC_MAX_VERTICES = 15'000'000;
 static constexpr uint32_t MC_MAX_INDICES  = 15'000'000;
@@ -252,6 +255,28 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                                                       MC_MAX_VERTICES,
                                                       MC_MAX_INDICES,
                                                       "WorldMesh");
+    // Load mesh texture for the world mesh (transparent phong shading).
+    // Uses textures/mesh.png if available; nullptr triggers a placeholder in the pipeline.
+    if (io::AssetLoader::exists("textures/mesh.png")) {
+        std::vector<uint8_t> pixels;
+        VkFormat fmt;
+        int w, h;
+        io::LoadImage("textures/mesh.png", pixels, fmt, w, h);
+        gMeshTexture = std::make_unique<graphics::Texture2D>(
+                gVkContext->GetDevice(),
+                gVkContext->GetAllocator(),
+                *gCommandPoolManager,
+                pixels,
+                static_cast<uint32_t>(w),
+                static_cast<uint32_t>(h),
+                fmt,
+                "mesh");
+    } else {
+        LOGI("textures/mesh.png not found — world mesh will use placeholder texture");
+    }
+    // Create a renderable for the world mesh (identity transform — mesh is already in world coords)
+    gWorldMeshRenderable = std::make_unique<graphics::Renderable>("world_mesh");
+    gWorldMeshRenderable->SetMesh(gWorldMesh.get());
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -284,6 +309,14 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                                       graphics::TransparentPhongConfig(gGridTexture.get()),
                                                                       pipelineLayouts["transparent_phong"],
                                                                       descriptorSetLayouts["transparent_phong"]);
+    // World mesh pipeline: separate transparent phong instance with mesh.png texture
+    // (or placeholder if mesh.png not yet provided)
+    gWorldMeshPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
+                                                               gVkContext->GetDevice(),
+                                                               gVkContext->GetAllocator(),
+                                                               graphics::TransparentPhongConfig(gMeshTexture.get()),
+                                                               pipelineLayouts["transparent_phong"],
+                                                               descriptorSetLayouts["transparent_phong"]);
     gCameraBgPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
                                                               gVkContext->GetDevice(),
                                                               gVkContext->GetAllocator(),
@@ -318,6 +351,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     // that command buffers from the oldest in-flight frame are done.
     // Must NOT run during command buffer recording (would destroy bound resources).
     if (gTransparentPhongPipeline) gTransparentPhongPipeline->CollectGarbage();
+    if (gWorldMeshPipeline) gWorldMeshPipeline->CollectGarbage();
     if (gCameraBgPipeline) gCameraBgPipeline->CollectGarbage();
     if (gComposePipeline) gComposePipeline->CollectGarbage();
 
@@ -600,10 +634,13 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     gDeprojectionPipeline = nullptr;
     gDepthDeprojectionOutput = nullptr;
     gArDepthImage = nullptr;
+    gWorldMeshRenderable = nullptr;
     gComposePipeline = nullptr;
     gCameraBgPipeline = nullptr;
+    gWorldMeshPipeline = nullptr;
     gTransparentPhongPipeline = nullptr;
     gUnshadedOpaquePipeline = nullptr;
+    gMeshTexture = nullptr;
     gGridTexture = nullptr;
     gCommandPoolManager = nullptr;
     gFrameSync = nullptr;
@@ -760,6 +797,30 @@ void DrawOffscreenRenderPass(VkCommandBuffer cmd, const uint32_t frameIndex){
         gTransparentPhongPipeline->Draw(cmd, &rdo, plane.second.get(), frameIndex);
         auto msg = Concatenate("[arplanes] drew plane ", plane.second->GetId());
         LOGI("%s", msg.c_str());
+    }
+    // Draw the reconstructed world mesh (marching cubes output)
+    if (gWorldMeshPipeline && gWorldMeshRenderable && gWorldMesh &&
+        gWorldMesh->GetIndexCount() > 0) {
+        graphics::RDO rdo;
+        // Identity model matrix — mesh is already in world coordinates
+        rdo.Add(graphics::RDO::Keys::MODEL_MAT, glm::mat4(1.0f));
+
+        std::array<float,16> arViewMatrix{};
+        gArSessionManager->getViewMatrix(arViewMatrix.data());
+        glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
+        rdo.Add(graphics::RDO::Keys::VIEW_MAT, viewMat);
+
+        std::array<float,16> arProjMatrix{};
+        gArSessionManager->getProjectionMatrix(0.01f, 100.f, arProjMatrix.data());
+        glm::mat4 projMat = glm::make_mat4(arProjMatrix.data());
+        rdo.Add(graphics::RDO::Keys::PROJ_MAT, projMat);
+
+        rdo.Add(graphics::RDO::Keys::LIGHT_DIR, lightDir);
+        rdo.Add(graphics::RDO::Keys::LIGHT_COLOR, lightColor);
+        rdo.Add(graphics::RDO::Keys::AMBIENT_COLOR, ambientColor);
+
+        gWorldMeshPipeline->Bind(cmd);
+        gWorldMeshPipeline->Draw(cmd, &rdo, gWorldMeshRenderable.get(), frameIndex);
     }
     gOffscreenRenderPass->End(cmd);
 }
