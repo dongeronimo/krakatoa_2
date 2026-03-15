@@ -30,7 +30,23 @@ namespace graphics {
             //3d volume image view for voxelization
             volume_image_view,
             //position count for voxelization dispatch
-            position_count
+            position_count,
+            //voxel scale factor (meters to voxel units, e.g. 100.0 for 1cm)
+            voxel_scale,
+            //marching cubes cutoff threshold (0-255)
+            mc_cutoff,
+            //marching cubes max discontinuity distance (in voxel units)
+            mc_max_distance,
+            //marching cubes vertex output buffer
+            mc_vertex_buffer,
+            //marching cubes index output buffer
+            mc_index_buffer,
+            //marching cubes atomic counter buffer
+            mc_counter_buffer,
+            //marching cubes max vertices capacity
+            mc_max_vertices,
+            //marching cubes max indices capacity
+            mc_max_indices
         };
         void Add(Keys k, float v){
             floatTable.insert({k, v});

@@ -132,6 +132,11 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         voxelization_config.h
         voxel_volume.cpp
         voxel_volume.h
+        marching_cubes_config.cpp
+        marching_cubes_config.h
+        marching_cubes_tables.h
+        gpu_mesh.cpp
+        gpu_mesh.h
         CDO.h
         cdo.cpp
 )

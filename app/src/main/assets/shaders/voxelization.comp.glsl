@@ -15,6 +15,7 @@ layout(set = 0, binding = 1, r8ui) uniform uimage3D volumeTexture;
 
 layout(push_constant) uniform PushConstants {
     uint positionCount; // total number of positions to process
+    float scale;        // conversion factor: meters → voxel units (e.g. 100.0 for 1cm voxels)
 } pc;
 
 layout(local_size_x = 256) in;
@@ -27,11 +28,12 @@ void main() {
     // Invalid pixels were zeroed out by the deprojection shader
     if (pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0) return;
 
-    // World coordinates are in meters. Convert to centimeters for the voxel grid.
-    vec3 posCm = pos.xyz * 100.0;
+    // World coordinates are in meters. Convert to voxel units using scale.
+    // scale = 100.0 means 1 voxel = 1 cm, scale = 1000.0 means 1 voxel = 1 mm, etc.
+    vec3 posScaled = pos.xyz * pc.scale;
 
     // Volume centre (512, 512, 512) = world origin.
-    ivec3 voxelCoord = ivec3(floor(posCm)) + ivec3(512);
+    ivec3 voxelCoord = ivec3(floor(posScaled)) + ivec3(512);
 
     // Bounds check — discard points outside the 1024³ cube
     if (any(lessThan(voxelCoord, ivec3(0))) || any(greaterThanEqual(voxelCoord, ivec3(1024))))

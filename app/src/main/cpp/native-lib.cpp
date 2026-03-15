@@ -37,6 +37,8 @@
 #include "depth_deprojection_config.h"
 #include "voxelization_config.h"
 #include "voxel_volume.h"
+#include "marching_cubes_config.h"
+#include "gpu_mesh.h"
 #include "CDO.h"
 #include "vk_debug.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
@@ -66,6 +68,11 @@ std::unique_ptr<graphics::ComputePipeline> gDeprojectionPipeline = nullptr;
 std::unique_ptr<graphics::DepthDeprojectionOutput> gDepthDeprojectionOutput = nullptr;
 std::unique_ptr<graphics::ComputePipeline> gVoxelizationPipeline = nullptr;
 std::unique_ptr<graphics::VoxelVolume> gVoxelVolume = nullptr;
+std::unique_ptr<graphics::ComputePipeline> gMarchingCubesPipeline = nullptr;
+std::unique_ptr<graphics::GpuMesh> gWorldMesh = nullptr;
+// Marching cubes output capacity — 5M triangles max (15M vertices, 15M indices)
+static constexpr uint32_t MC_MAX_VERTICES = 15'000'000;
+static constexpr uint32_t MC_MAX_INDICES  = 15'000'000;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -154,6 +161,11 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     descriptorSetLayouts.insert({"compute_voxelization", voxelDescriptorSetLayout});
     auto voxelPipelineLayout = graphics::VoxelizationPipelineLayout(gVkContext->GetDevice(), voxelDescriptorSetLayout);
     pipelineLayouts.insert({"compute_voxelization", voxelPipelineLayout});
+    // Marching cubes compute pipeline.
+    auto mcDescriptorSetLayout = graphics::MarchingCubesDescriptorSetLayout(gVkContext->GetDevice());
+    descriptorSetLayouts.insert({"compute_marching_cubes", mcDescriptorSetLayout});
+    auto mcPipelineLayout = graphics::MarchingCubesPipelineLayout(gVkContext->GetDevice(), mcDescriptorSetLayout);
+    pipelineLayouts.insert({"compute_marching_cubes", mcPipelineLayout});
 
     ANativeWindow_release(window);
     //Creates the command pool manager
@@ -234,6 +246,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                                                             gVkContext->GetAllocator(),
                                                             *gCommandPoolManager,
                                                             "VoxelVolume");
+    // create the GPU mesh for marching cubes output
+    gWorldMesh = std::make_unique<graphics::GpuMesh>(gVkContext->GetDevice(),
+                                                      gVkContext->GetAllocator(),
+                                                      MC_MAX_VERTICES,
+                                                      MC_MAX_INDICES,
+                                                      "WorldMesh");
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -449,6 +467,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     voxelCDO.Add(graphics::CDO::Keys::volume_image_view, gVoxelVolume->GetImageView());
     uint32_t positionCount = static_cast<uint32_t>(arDepthWidth) * static_cast<uint32_t>(arDepthHeight);
     voxelCDO.Add(graphics::CDO::Keys::position_count, positionCount);
+    voxelCDO.Add(graphics::CDO::Keys::voxel_scale, 100.0f); // 1 voxel = 1 cm
     gVoxelizationPipeline->Dispatch(cmd, frameIndex, voxelCDO);
     // Memory barrier: voxelization writes to the 3D image must complete before marching cubes reads it
     VkMemoryBarrier voxelBarrier{};
@@ -462,7 +481,44 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                          1, &voxelBarrier,
                          0, nullptr,
                          0, nullptr);
-    // TODO marching cubes: Run marching cubes to create the geometry for the real world using the 3d volume
+    // Lazily create the marching cubes compute pipeline
+    if (gMarchingCubesPipeline == nullptr) {
+        graphics::ComputePipelineConfig mcConfig = graphics::MarchingCubesConfig(
+                gVkContext->GetAllocator());
+        gMarchingCubesPipeline = std::make_unique<graphics::ComputePipeline>(
+                gVkContext->GetDevice(),
+                gVkContext->GetAllocator(),
+                mcConfig,
+                pipelineLayouts["compute_marching_cubes"],
+                descriptorSetLayouts["compute_marching_cubes"]);
+    }
+    // Reset mesh counters before dispatch
+    gWorldMesh->ResetCounters();
+    // Marching cubes: generate mesh from voxel volume
+    graphics::CDO mcCDO;
+    mcCDO.Add(graphics::CDO::Keys::volume_image_view, gVoxelVolume->GetImageView());
+    mcCDO.Add(graphics::CDO::Keys::mc_vertex_buffer, gWorldMesh->GetVertexStorageBuffer());
+    mcCDO.Add(graphics::CDO::Keys::mc_index_buffer, gWorldMesh->GetIndexStorageBuffer());
+    mcCDO.Add(graphics::CDO::Keys::mc_counter_buffer, gWorldMesh->GetCounterBuffer());
+    mcCDO.Add(graphics::CDO::Keys::mc_cutoff, static_cast<uint32_t>(127));
+    mcCDO.Add(graphics::CDO::Keys::voxel_scale, 100.0f);
+    mcCDO.Add(graphics::CDO::Keys::mc_max_distance, 2.0f);
+    mcCDO.Add(graphics::CDO::Keys::mc_max_vertices, MC_MAX_VERTICES);
+    mcCDO.Add(graphics::CDO::Keys::mc_max_indices, MC_MAX_INDICES);
+    gMarchingCubesPipeline->Dispatch(cmd, frameIndex, mcCDO);
+    // Memory barrier: marching cubes writes to vertex/index buffers must complete
+    // before the graphics pipeline reads them for rendering
+    VkMemoryBarrier mcBarrier{};
+    mcBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mcBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    mcBarrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+                         0,
+                         1, &mcBarrier,
+                         0, nullptr,
+                         0, nullptr);
 
     ////////////////////////////
     // Update AR planes
@@ -537,6 +593,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     {
         vkDestroyPipelineLayout(gVkContext->GetDevice(), value, nullptr);
     }
+    gMarchingCubesPipeline = nullptr;
+    gWorldMesh = nullptr;
     gVoxelizationPipeline = nullptr;
     gVoxelVolume = nullptr;
     gDeprojectionPipeline = nullptr;
