@@ -26,7 +26,11 @@ namespace graphics {
             //data as vec4
             vec4_buffer,
             //view inverse matrix
-            view_inverse
+            view_inverse,
+            //3d volume image view for voxelization
+            volume_image_view,
+            //position count for voxelization dispatch
+            position_count
         };
         void Add(Keys k, float v){
             floatTable.insert({k, v});
@@ -39,6 +43,12 @@ namespace graphics {
         }
         void Add(Keys k, VkBuffer v){
             vkBufferTable.insert({k, v});
+        }
+        void Add(Keys k, VkImageView v){
+            vkImageViewTable.insert({k, v});
+        }
+        void Add(Keys k, uint32_t v){
+            uint32Table.insert({k, v});
         }
         void Add(Keys k, const std::array<float,16>& v){
             mat4Table.insert({k, v});
@@ -55,12 +65,20 @@ namespace graphics {
         const std::array<float,16>& GetMat4(Keys k) const {
             return mat4Table.at(k);
         }
+        VkImageView GetVkImageView(Keys k) const {
+            return vkImageViewTable.at(k);
+        }
+        uint32_t GetUint32(Keys k) const {
+            return uint32Table.at(k);
+        }
     private:
         std::unordered_map<Keys, float> floatTable;
         std::unordered_map<Keys, std::vector<uint16_t>> vectorUint16Table;
         std::unordered_map<Keys, VkBuffer> vkBufferTable;
         std::unordered_map<Keys, int32_t> int32Table;
         std::unordered_map<Keys, std::array<float,16>> mat4Table;
+        std::unordered_map<Keys, VkImageView> vkImageViewTable;
+        std::unordered_map<Keys, uint32_t> uint32Table;
     };
 }
 #endif //KRAKATOA_CDO_H

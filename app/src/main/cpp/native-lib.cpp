@@ -35,6 +35,8 @@
 #include "ar_depth_image.h"
 #include "compute_pipeline.h"
 #include "depth_deprojection_config.h"
+#include "voxelization_config.h"
+#include "voxel_volume.h"
 #include "CDO.h"
 #include "vk_debug.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
@@ -62,6 +64,8 @@ std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
 std::unique_ptr<graphics::ArDepthImage> gArDepthImage = nullptr;
 std::unique_ptr<graphics::ComputePipeline> gDeprojectionPipeline = nullptr;
 std::unique_ptr<graphics::DepthDeprojectionOutput> gDepthDeprojectionOutput = nullptr;
+std::unique_ptr<graphics::ComputePipeline> gVoxelizationPipeline = nullptr;
+std::unique_ptr<graphics::VoxelVolume> gVoxelVolume = nullptr;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -145,6 +149,11 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     descriptorSetLayouts.insert({"compute_depth_deprojection", deprojectDescriptorSetLayout});
     auto deprojectPipelineLayout = graphics::DepthDeprojectionPipelineLayout(gVkContext->GetDevice(), deprojectDescriptorSetLayout);
     pipelineLayouts.insert({"compute_depth_deprojection", deprojectPipelineLayout});
+    // Voxelization compute pipeline.
+    auto voxelDescriptorSetLayout = graphics::VoxelizationDescriptorSetLayout(gVkContext->GetDevice());
+    descriptorSetLayouts.insert({"compute_voxelization", voxelDescriptorSetLayout});
+    auto voxelPipelineLayout = graphics::VoxelizationPipelineLayout(gVkContext->GetDevice(), voxelDescriptorSetLayout);
+    pipelineLayouts.insert({"compute_voxelization", voxelPipelineLayout});
 
     ANativeWindow_release(window);
     //Creates the command pool manager
@@ -220,6 +229,11 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
 
     // create the output object for deprojection - still need to create the actual buffers once i know the size of the depth buffer
     gDepthDeprojectionOutput = std::make_unique<graphics::DepthDeprojectionOutput>();
+    // create the voxel volume (1024³ R8_UINT 3D texture, cleared to zero)
+    gVoxelVolume = std::make_unique<graphics::VoxelVolume>(gVkContext->GetDevice(),
+                                                            gVkContext->GetAllocator(),
+                                                            *gCommandPoolManager,
+                                                            "VoxelVolume");
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -419,8 +433,36 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                          1, &computeBarrier,
                          0, nullptr,
                          0, nullptr);
-    // TODO volume builder: take the deproject result and put the world coordinate vertexes in 1cm boxes held in a texture 3d
-    // TODO marching cubes: Run marching cubes to create the geometry for the real world using the 3d texture from volume builder
+    // Lazily create the voxelization compute pipeline
+    if (gVoxelizationPipeline == nullptr) {
+        graphics::ComputePipelineConfig voxelConfig = graphics::VoxelizationConfig();
+        gVoxelizationPipeline = std::make_unique<graphics::ComputePipeline>(
+                gVkContext->GetDevice(),
+                gVkContext->GetAllocator(),
+                voxelConfig,
+                pipelineLayouts["compute_voxelization"],
+                descriptorSetLayouts["compute_voxelization"]);
+    }
+    // Voxelization: accumulate deprojected positions into the 3D volume
+    graphics::CDO voxelCDO;
+    voxelCDO.Add(graphics::CDO::Keys::vec4_buffer, gDepthDeprojectionOutput->outputBuffer.Current());
+    voxelCDO.Add(graphics::CDO::Keys::volume_image_view, gVoxelVolume->GetImageView());
+    uint32_t positionCount = static_cast<uint32_t>(arDepthWidth) * static_cast<uint32_t>(arDepthHeight);
+    voxelCDO.Add(graphics::CDO::Keys::position_count, positionCount);
+    gVoxelizationPipeline->Dispatch(cmd, frameIndex, voxelCDO);
+    // Memory barrier: voxelization writes to the 3D image must complete before marching cubes reads it
+    VkMemoryBarrier voxelBarrier{};
+    voxelBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    voxelBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    voxelBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         0,
+                         1, &voxelBarrier,
+                         0, nullptr,
+                         0, nullptr);
+    // TODO marching cubes: Run marching cubes to create the geometry for the real world using the 3d volume
 
     ////////////////////////////
     // Update AR planes
@@ -495,6 +537,11 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     {
         vkDestroyPipelineLayout(gVkContext->GetDevice(), value, nullptr);
     }
+    gVoxelizationPipeline = nullptr;
+    gVoxelVolume = nullptr;
+    gDeprojectionPipeline = nullptr;
+    gDepthDeprojectionOutput = nullptr;
+    gArDepthImage = nullptr;
     gComposePipeline = nullptr;
     gCameraBgPipeline = nullptr;
     gTransparentPhongPipeline = nullptr;

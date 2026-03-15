@@ -128,6 +128,10 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         compute_pipeline.h
         depth_deprojection_config.cpp
         depth_deprojection_config.h
+        voxelization_config.cpp
+        voxelization_config.h
+        voxel_volume.cpp
+        voxel_volume.h
         CDO.h
         cdo.cpp
 )
