@@ -195,9 +195,11 @@ void main() {
             outVertices.data[offset + 7] = uv.y;
         }
 
-        // Write indices (simple: 3 sequential indices per triangle)
+        // Write indices — reversed winding (0,2,1) so triangles are CCW in
+        // Vulkan's coordinate system (Y-down in NDC vs OpenGL's Y-up).
+        // The Bourke tri table assumes OpenGL/right-hand winding.
         outIndices.data[idxBase + 0] = vertBase + 0;
-        outIndices.data[idxBase + 1] = vertBase + 1;
-        outIndices.data[idxBase + 2] = vertBase + 2;
+        outIndices.data[idxBase + 1] = vertBase + 2;
+        outIndices.data[idxBase + 2] = vertBase + 1;
     }
 }
