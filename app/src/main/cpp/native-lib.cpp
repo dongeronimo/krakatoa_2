@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <string>
+#include <cstring>
 #include <cassert>
 #include <android/native_window_jni.h>
 #include <memory>
@@ -378,12 +379,21 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gArDepthImage->Advance();
     // TODO deproject (done): Create or update the current ar depth image in vulkan
     gArDepthImage->UpdateImage(depthData, {(uint32_t)arDepthWidth, (uint32_t)arDepthHeight});
-    // TODO deproject (done): bind the compute shader for deprojection
-    gDeprojectionPipeline->Bind(cmd);
-    // TODO deproject (done): Get the intrinsics
+    // Advance the output ring buffers for deprojection
+    gDepthDeprojectionOutput->outputBuffer.Next();
+    gDepthDeprojectionOutput->outputBufferAllocation.Next();
+    gDepthDeprojectionOutput->outputBufferSize.Next();
+    // Get the intrinsics
     ar::ArDepthIntrinsics arDepthIntrinsics{};
     gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
-    // TODO deproject: update the uniforms using the CDO
+    // Get the view inverse matrix for camera→world transform
+    std::array<float,16> arViewMatrix{};
+    gArSessionManager->getViewMatrix(arViewMatrix.data());
+    glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
+    glm::mat4 viewInvMat = glm::inverse(viewMat);
+    std::array<float,16> viewInvArray{};
+    memcpy(viewInvArray.data(), glm::value_ptr(viewInvMat), sizeof(float) * 16);
+    // Build the CDO with all data the dispatch callback needs
     graphics::CDO deprojectCDO;
     deprojectCDO.Add(graphics::CDO::Keys::fx, arDepthIntrinsics.fx);
     deprojectCDO.Add(graphics::CDO::Keys::fy, arDepthIntrinsics.fy);
@@ -391,7 +401,10 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     deprojectCDO.Add(graphics::CDO::Keys::cy, arDepthIntrinsics.cy);
     deprojectCDO.Add(graphics::CDO::Keys::width, arDepthIntrinsics.w);
     deprojectCDO.Add(graphics::CDO::Keys::height, arDepthIntrinsics.h);
-    // TODO deproject: dispatch the execution
+    deprojectCDO.Add(graphics::CDO::Keys::uint16_buffer, gArDepthImage->GetCurrentBuffer());
+    deprojectCDO.Add(graphics::CDO::Keys::vec4_buffer, gDepthDeprojectionOutput->outputBuffer.Current());
+    deprojectCDO.Add(graphics::CDO::Keys::view_inverse, viewInvArray);
+    // Dispatch the deprojection compute shader
     gDeprojectionPipeline->Dispatch(cmd, frameIndex, deprojectCDO);
     // TODO volume builder: take the deproject result and put the world coordinate vertexes in 1cm boxes held in a texture 3d
     // TODO marching cubes: Run marching cubes to create the geometry for the real world using the 3d texture from volume builder

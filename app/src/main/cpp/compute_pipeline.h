@@ -68,6 +68,18 @@ namespace graphics {
         bool HasBuffer(const std::string& id) const {
             return storedBuffers.count(id) > 0;
         }
+        /**
+         * Get a stored buffer by id
+         * */
+        VkBuffer GetBuffer(const std::string& id) const {
+            return storedBuffers.at(id);
+        }
+        /**
+         * Get the mapped memory pointer for a stored buffer
+         * */
+        void* GetMappedMemory(const std::string& id) const {
+            return storedMaps.at(id);
+        }
     private:
         /**
          * I own these buffers, they are stored at the compute pipeline to have a permanent and
