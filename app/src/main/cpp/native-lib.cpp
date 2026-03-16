@@ -563,14 +563,16 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     VkMemoryBarrier mcBarrier{};
     mcBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
     mcBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    mcBarrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
+    mcBarrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
     vkCmdPipelineBarrier(cmd,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+                         VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                          0,
                          1, &mcBarrier,
                          0, nullptr,
                          0, nullptr);
+    // Prepare indirect draw: copy GPU-written index count into the indirect draw buffer
+    gWorldMesh->PrepareIndirectDraw(cmd);
     } // depthImageHandle != nullptr
 
     ////////////////////////////
@@ -818,8 +820,8 @@ void DrawOffscreenRenderPass(VkCommandBuffer cmd, const uint32_t frameIndex){
         LOGI("%s", msg.c_str());
     }
     // Draw the reconstructed world mesh (marching cubes output)
-    if (gWorldMeshPipeline && gWorldMeshRenderable && gWorldMesh &&
-        gWorldMesh->GetIndexCount() > 0) {
+    // Note: index count is checked GPU-side via indirect draw, not CPU-side
+    if (gWorldMeshPipeline && gWorldMeshRenderable && gWorldMesh) {
         graphics::RDO rdo;
         // Identity model matrix — mesh is already in world coordinates
         rdo.Add(graphics::RDO::Keys::MODEL_MAT, glm::mat4(1.0f));

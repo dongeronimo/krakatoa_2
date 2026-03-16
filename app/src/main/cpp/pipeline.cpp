@@ -402,9 +402,10 @@ PipelineConfig graphics::TransparentPhongConfig(Texture2D* texture) {
 
         // -- Check if mesh has valid data before touching the command buffer --
         Mesh* mesh = obj->GetMesh();
+        VkBuffer indirectBuf = mesh ? mesh->GetIndirectDrawBuffer() : VK_NULL_HANDLE;
         bool canDraw = mesh
                        && mesh->GetVertexBuffer() != VK_NULL_HANDLE
-                       && mesh->GetIndexCount() > 0;
+                       && (indirectBuf != VK_NULL_HANDLE || mesh->GetIndexCount() > 0);
 
         if (canDraw) {
             // Fill UBO with matrices and lighting data
@@ -439,7 +440,11 @@ PipelineConfig graphics::TransparentPhongConfig(Texture2D* texture) {
             VkDeviceSize offsets[] = {0};
             vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
             vkCmdBindIndexBuffer(cmd, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd, mesh->GetIndexCount(), 1, 0, 0, 0);
+            if (indirectBuf != VK_NULL_HANDLE) {
+                vkCmdDrawIndexedIndirect(cmd, indirectBuf, 0, 1, sizeof(VkDrawIndexedIndirectCommand));
+            } else {
+                vkCmdDrawIndexed(cmd, mesh->GetIndexCount(), 1, 0, 0, 0);
+            }
         }
 
         // ALWAYS advance ring buffers and keep-alive, even when not drawing.

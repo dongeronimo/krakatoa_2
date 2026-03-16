@@ -15,6 +15,9 @@ namespace graphics {
         virtual VkBuffer GetIndexBuffer()const =0;
         virtual uint32_t GetIndexCount()const = 0;
         virtual uint32_t GetVertexCount()const = 0;
+        /** If non-null, the mesh supports GPU-driven indirect draw.
+         *  The returned buffer contains a VkDrawIndexedIndirectCommand. */
+        virtual VkBuffer GetIndirectDrawBuffer() const { return VK_NULL_HANDLE; }
     };
 }
 #endif //KRAKATOA_MESH_H

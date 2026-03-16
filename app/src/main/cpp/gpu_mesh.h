@@ -55,6 +55,16 @@ namespace graphics {
         uint32_t GetMaxVertices() const { return maxVertices; }
         uint32_t GetMaxIndices()  const { return maxIndices; }
 
+        /** Buffer containing a VkDrawIndexedIndirectCommand for GPU-driven draw. */
+        VkBuffer GetIndirectDrawBuffer() const override { return indirectDrawBuffer; }
+
+        /**
+         * Records a vkCmdCopyBuffer that copies the index count from the
+         * atomic counter buffer into the indirect draw command buffer.
+         * Call this after the compute dispatch barrier and before the render pass.
+         */
+        void PrepareIndirectDraw(VkCommandBuffer cmd);
+
         /**
          * Reset the atomic counters to zero. Call this before dispatching
          * the compute shader that fills this mesh.
@@ -77,6 +87,11 @@ namespace graphics {
         VkBuffer      counterBuffer      = VK_NULL_HANDLE;
         VmaAllocation counterAllocation   = VK_NULL_HANDLE;
         uint32_t*     counterMappedPtr    = nullptr; // persistent mapping
+
+        // GPU-local indirect draw buffer: VkDrawIndexedIndirectCommand
+        // [indexCount, instanceCount, firstIndex, vertexOffset, firstInstance]
+        VkBuffer      indirectDrawBuffer     = VK_NULL_HANDLE;
+        VmaAllocation indirectDrawAllocation  = VK_NULL_HANDLE;
     };
 }
 #endif //KRAKATOA_GPU_MESH_H
