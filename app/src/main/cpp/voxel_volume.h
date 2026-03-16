@@ -13,7 +13,7 @@ namespace graphics {
      */
     class VoxelVolume {
     public:
-        static constexpr uint32_t VOLUME_SIZE = 1024;
+        static constexpr uint32_t VOLUME_SIZE = 256;
 
         VoxelVolume(VkDevice device,
                     VmaAllocator allocator,

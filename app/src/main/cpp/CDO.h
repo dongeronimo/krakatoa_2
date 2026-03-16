@@ -46,7 +46,9 @@ namespace graphics {
             //marching cubes max vertices capacity
             mc_max_vertices,
             //marching cubes max indices capacity
-            mc_max_indices
+            mc_max_indices,
+            //volume side length (e.g. 256)
+            mc_volume_size
         };
         void Add(Keys k, float v){
             floatTable.insert({k, v});

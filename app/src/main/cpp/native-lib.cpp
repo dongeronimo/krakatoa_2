@@ -73,9 +73,9 @@ std::unique_ptr<graphics::GpuMesh> gWorldMesh = nullptr;
 std::unique_ptr<graphics::Texture2D> gMeshTexture = nullptr;
 std::unique_ptr<graphics::Pipeline> gWorldMeshPipeline = nullptr;
 std::unique_ptr<graphics::Renderable> gWorldMeshRenderable = nullptr;
-// Marching cubes output capacity — 5M triangles max (15M vertices, 15M indices)
-static constexpr uint32_t MC_MAX_VERTICES = 15'000'000;
-static constexpr uint32_t MC_MAX_INDICES  = 15'000'000;
+// Marching cubes output capacity
+static constexpr uint32_t MC_MAX_VERTICES = 500'000;
+static constexpr uint32_t MC_MAX_INDICES  = 1'500'000;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -507,6 +507,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     uint32_t positionCount = static_cast<uint32_t>(arDepthWidth) * static_cast<uint32_t>(arDepthHeight);
     voxelCDO.Add(graphics::CDO::Keys::position_count, positionCount);
     voxelCDO.Add(graphics::CDO::Keys::voxel_scale, 100.0f); // 1 voxel = 1 cm
+    voxelCDO.Add(graphics::CDO::Keys::mc_volume_size, graphics::VoxelVolume::VOLUME_SIZE);
     gVoxelizationPipeline->Dispatch(cmd, frameIndex, voxelCDO);
     // Memory barrier: voxelization writes to the 3D image must complete before marching cubes reads it
     VkMemoryBarrier voxelBarrier{};

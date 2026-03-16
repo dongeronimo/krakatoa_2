@@ -6,7 +6,8 @@ using namespace graphics;
 
 struct VoxelizationPushConstant {
     uint32_t positionCount;
-    float scale; // meters → voxel units (100.0 = 1cm voxels)
+    float scale;       // meters → voxel units (100.0 = 1cm voxels)
+    uint32_t volumeSize; // side length of the 3D volume (e.g. 256)
 };
 
 ComputePipelineConfig graphics::VoxelizationConfig() {
@@ -61,10 +62,11 @@ ComputePipelineConfig graphics::VoxelizationConfig() {
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                                 pipeline.GetPipelineLayout(), 0, 1, &ds, 0, nullptr);
 
-        // Push the position count and scale
+        // Push the position count, scale, and volume size
         VoxelizationPushConstant pc{};
         pc.positionCount = positionCount;
         pc.scale = cdo.GetFloat(CDO::Keys::voxel_scale);
+        pc.volumeSize = cdo.GetUint32(CDO::Keys::mc_volume_size);
         vkCmdPushConstants(cmd, pipeline.GetPipelineLayout(),
                            VK_SHADER_STAGE_COMPUTE_BIT, 0,
                            sizeof(VoxelizationPushConstant), &pc);
