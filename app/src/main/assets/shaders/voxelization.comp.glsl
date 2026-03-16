@@ -34,8 +34,8 @@ void main() {
     vec3 posScaled = pos.xyz * pc.scale;
 
     // Volume centre = world origin.
-    int half = int(pc.volumeSize) / 2;
-    ivec3 voxelCoord = ivec3(floor(posScaled)) + ivec3(half);
+    int _half = int(pc.volumeSize) / 2;
+    ivec3 voxelCoord = ivec3(floor(posScaled)) + ivec3(_half);
 
     // Bounds check — discard points outside the volume cube
     if (any(lessThan(voxelCoord, ivec3(0))) || any(greaterThanEqual(voxelCoord, ivec3(pc.volumeSize))))
