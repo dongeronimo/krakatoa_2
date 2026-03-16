@@ -25,6 +25,24 @@ def find_compiler():
     return None
 
 
+STAGE_MAP = {
+    ".vert.glsl": "vert",
+    ".frag.glsl": "frag",
+    ".comp.glsl": "comp",
+    ".geom.glsl": "geom",
+    ".tesc.glsl": "tesc",
+    ".tese.glsl": "tese",
+}
+
+
+def detect_stage(filename):
+    """Return the GLSL stage string for a given filename, or None."""
+    for suffix, stage in STAGE_MAP.items():
+        if filename.endswith(suffix):
+            return stage
+    return None
+
+
 def main():
     compiler = find_compiler()
     if not compiler:
@@ -39,7 +57,11 @@ def main():
     failed = []
     for src in glsl_files:
         spv = src.rsplit(".glsl", 1)[0] + ".spv"
-        cmd = [compiler, "-V", "-g", "-Od", src, "-o", spv]
+        stage = detect_stage(src)
+        cmd = [compiler, "-V", "-g", "-Od"]
+        if stage:
+            cmd += ["-S", stage]
+        cmd += [src, "-o", spv]
         print(f"  {os.path.basename(src)} -> {os.path.basename(spv)}")
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
