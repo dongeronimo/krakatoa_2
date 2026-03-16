@@ -64,6 +64,7 @@ namespace ar {
             LOAD_ARCORE_FUNC(ArConfig_create);
             LOAD_ARCORE_FUNC(ArConfig_destroy);
             LOAD_ARCORE_FUNC(ArConfig_setDepthMode);
+            LOAD_ARCORE_FUNC(ArConfig_setPlaneFindingMode);
 
             // Frame functions
             LOAD_ARCORE_FUNC(ArFrame_create);
@@ -182,6 +183,8 @@ namespace ar {
         void (*ArConfig_destroy)(ArConfig* config) = nullptr;
         void (*ArConfig_setDepthMode)(const ArSession* session, ArConfig* config,
                                       ArDepthMode mode) = nullptr;
+        void (*ArConfig_setPlaneFindingMode)(const ArSession* session, ArConfig* config,
+                                             ArPlaneFindingMode mode) = nullptr;
 
         // ── Frame ──
         ArStatus (*ArFrame_create)(const ArSession* session, ArFrame** out_frame) = nullptr;

@@ -54,6 +54,9 @@ namespace ar {
 
         // Enable depth estimation so ArFrame_acquireDepthImage16Bits works
         m_loader.ArConfig_setDepthMode(m_session, m_config, AR_DEPTH_MODE_AUTOMATIC);
+        // Enable plane detection (default is DISABLED in a fresh ArConfig)
+        m_loader.ArConfig_setPlaneFindingMode(m_session, m_config,
+                                              AR_PLANE_FINDING_MODE_HORIZONTAL_AND_VERTICAL);
 
         LOGI("ARSessionManager::initialize - configuring session...");
         status = m_loader.ArSession_configure(m_session, m_config);
