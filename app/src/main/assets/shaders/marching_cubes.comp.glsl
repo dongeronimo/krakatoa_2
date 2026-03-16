@@ -39,7 +39,9 @@ layout(push_constant) uniform PushConstants {
     uint cutoff;       // occupancy threshold (e.g. 127)
     float scale;       // voxel-to-world scale (inverse of voxelization scale)
     float maxDistance;  // max edge length before discontinuity (in voxel units, e.g. 2.0)
-    uint volumeSize;   // e.g. 1024
+    uint volumeSizeX;  // X dimension
+    uint volumeSizeY;  // Y dimension
+    uint volumeSizeZ;  // Z dimension
     uint maxVertices;  // output buffer capacity (vertices)
     uint maxIndices;   // output buffer capacity (indices)
 } pc;
@@ -48,7 +50,8 @@ layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 // Sample the volume at integer coordinates. Returns 0 if out of bounds.
 float sampleVolume(ivec3 p) {
-    if (any(lessThan(p, ivec3(0))) || any(greaterThanEqual(p, ivec3(pc.volumeSize))))
+    ivec3 volSize = ivec3(int(pc.volumeSizeX), int(pc.volumeSizeY), int(pc.volumeSizeZ));
+    if (any(lessThan(p, ivec3(0))) || any(greaterThanEqual(p, volSize)))
         return 0.0;
     return float(imageLoad(volumeTexture, p).r);
 }
@@ -93,8 +96,7 @@ void main() {
     uvec3 cell = gl_GlobalInvocationID;
 
     // Each cell spans (cell) to (cell+1), so the last valid cell is volumeSize-2
-    uint maxCell = pc.volumeSize - 1;
-    if (cell.x >= maxCell || cell.y >= maxCell || cell.z >= maxCell) return;
+    if (cell.x >= pc.volumeSizeX - 1 || cell.y >= pc.volumeSizeY - 1 || cell.z >= pc.volumeSizeZ - 1) return;
 
     ivec3 basePos = ivec3(cell);
 
@@ -168,9 +170,9 @@ void main() {
 
         // Write vertices (8 floats each: pos3 + normal3 + uv2)
         // Convert from voxel coordinates to world coordinates:
-        // world = (voxelPos - 512) / scale
+        // world = (voxelPos - halfSize) / scale
         float invScale = 1.0 / pc.scale;
-        vec3 worldCenter = vec3(float(pc.volumeSize) * 0.5);
+        vec3 worldCenter = vec3(float(pc.volumeSizeX), float(pc.volumeSizeY), float(pc.volumeSizeZ)) * 0.5;
 
         for (int vi = 0; vi < 3; vi++) {
             vec3 vpos;

@@ -13,9 +13,11 @@ using namespace graphics;
 
 struct MarchingCubesPushConstant {
     uint32_t cutoff;
-    float    scale;       // same scale used in voxelization (100.0 for 1cm)
-    float    maxDistance;  // max edge length in voxel units
-    uint32_t volumeSize;
+    float    scale;        // same scale used in voxelization (100.0 for 1cm)
+    float    maxDistance;   // max edge length in voxel units
+    uint32_t volumeSizeX;
+    uint32_t volumeSizeY;
+    uint32_t volumeSizeZ;
     uint32_t maxVertices;
     uint32_t maxIndices;
 };
@@ -182,7 +184,9 @@ ComputePipelineConfig graphics::MarchingCubesConfig(VmaAllocator allocator) {
         pc.cutoff     = cdo.GetUint32(CDO::Keys::mc_cutoff);
         pc.scale      = cdo.GetFloat(CDO::Keys::voxel_scale);
         pc.maxDistance = cdo.GetFloat(CDO::Keys::mc_max_distance);
-        pc.volumeSize = VoxelVolume::VOLUME_SIZE;
+        pc.volumeSizeX = VoxelVolume::VOLUME_SIZE_X;
+        pc.volumeSizeY = VoxelVolume::VOLUME_SIZE_Y;
+        pc.volumeSizeZ = VoxelVolume::VOLUME_SIZE_Z;
         pc.maxVertices = cdo.GetUint32(CDO::Keys::mc_max_vertices);
         pc.maxIndices  = cdo.GetUint32(CDO::Keys::mc_max_indices);
 
@@ -190,12 +194,14 @@ ComputePipelineConfig graphics::MarchingCubesConfig(VmaAllocator allocator) {
                            VK_SHADER_STAGE_COMPUTE_BIT, 0,
                            sizeof(MarchingCubesPushConstant), &pc);
 
-        // Dispatch: 3D, workgroup size 4³, over (volumeSize-1)³ cells
-        uint32_t cells = VoxelVolume::VOLUME_SIZE - 1;
+        // Dispatch: 3D, workgroup size 4³, over (volumeSize-1) cells per axis
+        uint32_t cellsX = VoxelVolume::VOLUME_SIZE_X - 1;
+        uint32_t cellsY = VoxelVolume::VOLUME_SIZE_Y - 1;
+        uint32_t cellsZ = VoxelVolume::VOLUME_SIZE_Z - 1;
         pipeline.DispatchRaw(cmd,
-                             (cells + 3) / 4,
-                             (cells + 3) / 4,
-                             (cells + 3) / 4);
+                             (cellsX + 3) / 4,
+                             (cellsY + 3) / 4,
+                             (cellsZ + 3) / 4);
     };
     return config;
 }

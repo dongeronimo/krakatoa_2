@@ -13,12 +13,12 @@ VoxelVolume::VoxelVolume(VkDevice device,
                          const std::string& name)
     : device(device), allocator(allocator)
 {
-    // --- Create the 3D image (1024³, R8_UINT, device-local) ---
+    // --- Create the 3D image (R8_UINT, device-local) ---
     VkImageCreateInfo imgInfo{};
     imgInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imgInfo.imageType     = VK_IMAGE_TYPE_3D;
     imgInfo.format        = VK_FORMAT_R8_UINT;
-    imgInfo.extent        = { VOLUME_SIZE, VOLUME_SIZE, VOLUME_SIZE };
+    imgInfo.extent        = { VOLUME_SIZE_X, VOLUME_SIZE_Y, VOLUME_SIZE_Z };
     imgInfo.mipLevels     = 1;
     imgInfo.arrayLayers   = 1;
     imgInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
@@ -113,8 +113,9 @@ VoxelVolume::VoxelVolume(VkDevice device,
     debug::SetImageName(device, image, Concatenate(name, ":Image"));
     debug::SetImageViewName(device, imageView, Concatenate(name, ":ImageView"));
 
-    LOGI("VoxelVolume created: %u³ R8_UINT (~%u MB)",
-         VOLUME_SIZE, (VOLUME_SIZE * VOLUME_SIZE * VOLUME_SIZE) / (1024 * 1024));
+    LOGI("VoxelVolume created: %ux%ux%u R8_UINT (~%u MB)",
+         VOLUME_SIZE_X, VOLUME_SIZE_Y, VOLUME_SIZE_Z,
+         (VOLUME_SIZE_X * VOLUME_SIZE_Y * VOLUME_SIZE_Z) / (1024 * 1024));
 }
 
 VoxelVolume::~VoxelVolume() {
