@@ -464,6 +464,11 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     glm::mat4 viewInvMat = glm::inverse(viewMat);
     std::array<float,16> viewInvArray{};
     memcpy(viewInvArray.data(), glm::value_ptr(viewInvMat), sizeof(float) * 16);
+    // Skip dispatch if the depth buffer hasn't been uploaded yet (first frame
+    // after Advance — the ring buffer slot is still VK_NULL_HANDLE until the
+    // next Advance propagates the pending upload).
+    VkBuffer currentDepthBuffer = gArDepthImage->GetCurrentBuffer();
+    if (currentDepthBuffer != VK_NULL_HANDLE) {
     // Build the CDO with all data the dispatch callback needs
     graphics::CDO deprojectCDO;
     deprojectCDO.Add(graphics::CDO::Keys::fx, arDepthIntrinsics.fx);
@@ -472,7 +477,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     deprojectCDO.Add(graphics::CDO::Keys::cy, arDepthIntrinsics.cy);
     deprojectCDO.Add(graphics::CDO::Keys::width, arDepthIntrinsics.w);
     deprojectCDO.Add(graphics::CDO::Keys::height, arDepthIntrinsics.h);
-    deprojectCDO.Add(graphics::CDO::Keys::uint16_buffer, gArDepthImage->GetCurrentBuffer());
+    deprojectCDO.Add(graphics::CDO::Keys::uint16_buffer, currentDepthBuffer);
     deprojectCDO.Add(graphics::CDO::Keys::vec4_buffer, gDepthDeprojectionOutput->outputBuffer.Current());
     deprojectCDO.Add(graphics::CDO::Keys::view_inverse, viewInvArray);
     // Dispatch the deprojection compute shader
@@ -490,6 +495,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                          1, &computeBarrier,
                          0, nullptr,
                          0, nullptr);
+    } // currentDepthBuffer != VK_NULL_HANDLE
     // Lazily create the voxelization compute pipeline
     if (gVoxelizationPipeline == nullptr) {
         graphics::ComputePipelineConfig voxelConfig = graphics::VoxelizationConfig();
