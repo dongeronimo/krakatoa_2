@@ -440,8 +440,17 @@ namespace ar {
         }
     }
     ArImage* ARSessionManager::getDepthImage() {
+        if (!m_isTracking) {
+            return nullptr;
+        }
         ArImage* depthImage = nullptr;
-        m_loader.ArFrame_acquireDepthImage16Bits(m_session, m_frame, &depthImage);
+        ArStatus status = m_loader.ArFrame_acquireDepthImage16Bits(m_session, m_frame, &depthImage);
+        if (status != AR_SUCCESS) {
+            if (status != AR_ERROR_NOT_YET_AVAILABLE) {
+                LOGE("ArFrame_acquireDepthImage16Bits failed: %d", status);
+            }
+            return nullptr;
+        }
         return depthImage;
     }
     void ARSessionManager::getDepthImageDimensions(ArImage* image, int32_t& w, int32_t& h) {
