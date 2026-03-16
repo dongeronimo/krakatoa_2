@@ -471,12 +471,18 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     if (currentDepthBuffer != VK_NULL_HANDLE) {
     // Build the CDO with all data the dispatch callback needs
     graphics::CDO deprojectCDO;
-    deprojectCDO.Add(graphics::CDO::Keys::fx, arDepthIntrinsics.fx);
-    deprojectCDO.Add(graphics::CDO::Keys::fy, arDepthIntrinsics.fy);
-    deprojectCDO.Add(graphics::CDO::Keys::cx, arDepthIntrinsics.cx);
-    deprojectCDO.Add(graphics::CDO::Keys::cy, arDepthIntrinsics.cy);
-    deprojectCDO.Add(graphics::CDO::Keys::width, arDepthIntrinsics.w);
-    deprojectCDO.Add(graphics::CDO::Keys::height, arDepthIntrinsics.h);
+    // Scale camera intrinsics to depth image resolution.
+    // ARCore's ArCamera_getImageIntrinsics returns values for the full camera
+    // image, but the depth image is typically much smaller (e.g. 160x120 vs
+    // 1920x1080). Intrinsics scale linearly with resolution.
+    float scaleX = static_cast<float>(arDepthWidth)  / static_cast<float>(arDepthIntrinsics.w);
+    float scaleY = static_cast<float>(arDepthHeight) / static_cast<float>(arDepthIntrinsics.h);
+    deprojectCDO.Add(graphics::CDO::Keys::fx, arDepthIntrinsics.fx * scaleX);
+    deprojectCDO.Add(graphics::CDO::Keys::fy, arDepthIntrinsics.fy * scaleY);
+    deprojectCDO.Add(graphics::CDO::Keys::cx, arDepthIntrinsics.cx * scaleX);
+    deprojectCDO.Add(graphics::CDO::Keys::cy, arDepthIntrinsics.cy * scaleY);
+    deprojectCDO.Add(graphics::CDO::Keys::width, static_cast<int32_t>(arDepthWidth));
+    deprojectCDO.Add(graphics::CDO::Keys::height, static_cast<int32_t>(arDepthHeight));
     deprojectCDO.Add(graphics::CDO::Keys::uint16_buffer, currentDepthBuffer);
     deprojectCDO.Add(graphics::CDO::Keys::vec4_buffer, gDepthDeprojectionOutput->outputBuffer.Current());
     deprojectCDO.Add(graphics::CDO::Keys::view_inverse, viewInvArray);
