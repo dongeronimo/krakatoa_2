@@ -379,6 +379,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     /////////////////////////////
     // get the ar depth image handle in arcore
     ArImage* depthImageHandle = gArSessionManager->getDepthImage();
+    // Skip the entire compute pipeline if ARCore doesn't have a depth frame yet.
+    // This happens during the first few frames before the Depth API is fully initialized.
+    if (depthImageHandle != nullptr) {
     // get the depth image dimensions
     int32_t arDepthWidth = 0; int32_t arDepthHeight = 0;
     gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
@@ -555,6 +558,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                          1, &mcBarrier,
                          0, nullptr,
                          0, nullptr);
+    } // depthImageHandle != nullptr
 
     ////////////////////////////
     // Update AR planes
