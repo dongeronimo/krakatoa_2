@@ -387,6 +387,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         previousArDepthWidth = arDepthWidth;
         //TODO deproject (done): Create the output ring buffer. Size = vec4 * arDepthWidth * arDepthHeight
         assert(gDepthDeprojectionOutput);
+        assert(arDepthWidth > 0 && arDepthHeight > 0 && "Depth image has zero dimensions");
         size_t sizeInBytes = arDepthHeight * arDepthWidth * sizeof(float) * 4;
         for(int i=0; i<MAX_FRAMES_IN_FLIGHT; i++){
             //TODO deproject (done): create the output buffer
@@ -396,11 +397,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
             bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;  // for compute read/write
             VmaAllocationCreateInfo allocInfo{};
             allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
-            VkBuffer buffer;
-            VmaAllocation allocation;
-            vmaCreateBuffer(gVkContext->GetAllocator(),
+            VkBuffer buffer = VK_NULL_HANDLE;
+            VmaAllocation allocation = VK_NULL_HANDLE;
+            VkResult vmaResult = vmaCreateBuffer(gVkContext->GetAllocator(),
                             &bufferInfo, &allocInfo,
                             &buffer, &allocation, nullptr);
+            assert(vmaResult == VK_SUCCESS && "Failed to allocate deprojection output buffer");
             //TODO deproject (done): put in the ring buffer
             gDepthDeprojectionOutput->outputBuffer[i] = buffer;
             gDepthDeprojectionOutput->outputBufferAllocation[i] = allocation;
