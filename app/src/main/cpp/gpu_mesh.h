@@ -62,7 +62,6 @@ namespace graphics {
         void ResetCounters();
 
     private:
-        VkDevice     device;
         VmaAllocator allocator;
 
         uint32_t maxVertices;

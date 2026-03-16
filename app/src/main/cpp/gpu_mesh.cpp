@@ -12,7 +12,7 @@ GpuMesh::GpuMesh(VkDevice device,
                  uint32_t maxVertices,
                  uint32_t maxIndices,
                  const std::string& name)
-    : device(device), allocator(allocator),
+    : allocator(allocator),
       maxVertices(maxVertices), maxIndices(maxIndices)
 {
     // --- Vertex buffer (GPU-local, used as both storage and vertex buffer) ---
