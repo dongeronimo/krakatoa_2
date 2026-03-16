@@ -1,36 +1,18 @@
 #version 450
-#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
-//Takes the ar depth buffer (from ArFrame_acquireDepthImage16Bits) and deproject its depth values,
-//getting their values in world coordinates.
-// Intrinsics da câmera (ARCore)
-//float fx, fy;   // focal length em pixels
-//float cx, cy;   // principal point
-//
-//// Para cada pixel (u, v) do depth buffer:
-//float depth = depthBuffer[v * width + u];  // metros
-//
-//if (depth <= 0.0f) continue;  // pixel inválido
-//
-//// Passo 1: pixel → espaço da câmera
-//float x_cam = (u - cx) / fx * depth;
-//float y_cam = (v - cy) / fy * depth;
-//float z_cam = -depth;  // convenção câmera aponta -Z
-//
-//// Passo 2: câmera → mundo
-//glm::vec4 p_cam = {x_cam, y_cam, z_cam, 1.0f};
-//glm::mat4 view_inv = glm::inverse(viewMatrix);
-//glm::vec4 p_world  = view_inv * p_cam;
-// Buffer 0: camera intrinsics + image dimensions
+// Takes the AR depth buffer (from ArFrame_acquireDepthImage16Bits) and deprojects
+// its depth values to world-space positions.
+
+// Buffer 0: camera intrinsics
 layout (set = 0, binding = 0) buffer UBO {
-    float fx; //Focal length in px
-    float fy; //Focal length in px
-    float cx; //Principal point
-    float cy; //Principal point
+    float fx; // Focal length in px
+    float fy; // Focal length in px
+    float cx; // Principal point
+    float cy; // Principal point
 } ubo;
 
-// Buffer 1: the depth data
+// Buffer 1: depth data as packed uint32 (two uint16 depth values per element)
 layout(set = 0, binding = 1) buffer DepthBuffer {
-    uint16_t data[];
+    uint data[];
 } depthBuffer;
 
 // Buffer 2: output world positions
@@ -56,8 +38,10 @@ void main() {
     // a size = width * height.
     uint index = v * pc.width + u;
 
-    // Read and convert depth (ARCore uint16 is in millimeters)
-    float depth = float(uint(depthBuffer.data[index])) / 1000.0;
+    // Read uint16 depth from packed uint32 array (ARCore uint16 is in millimeters)
+    uint packed = depthBuffer.data[index >> 1u];
+    uint raw16  = (index & 1u) == 0u ? (packed & 0xFFFFu) : (packed >> 16u);
+    float depth = float(raw16) / 1000.0;
 
     if (depth <= 0.0) {
         outBuffer.positions[index] = vec4(0.0);
