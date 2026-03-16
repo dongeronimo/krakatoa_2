@@ -42,13 +42,9 @@ namespace ar {
         glGenTextures(1, &dummyTexture);
         m_loader.ArSession_setCameraTextureName(m_session, dummyTexture);
 
-        // ── Query available resolutions and select the highest ──
-        queryAvailableResolutions();
-        if (!m_resolutions.empty()) {
-            // Default to highest resolution (last entry, sorted ascending by pixel count)
-            setResolution(static_cast<int32_t>(m_resolutions.size()) - 1);
-        }
-
+        // ── Create config BEFORE resolution selection ──
+        // setResolution() pauses and resumes the session, so the config
+        // (depth mode, plane finding, etc.) must already be applied.
         LOGI("ARSessionManager::initialize - creating config...");
         m_loader.ArConfig_create(m_session, &m_config);
 
@@ -65,6 +61,13 @@ namespace ar {
         if (status != AR_SUCCESS) {
             LOGE("Failed to configure ARCore session: %d", status);
             return false;
+        }
+
+        // ── Query available resolutions and select the highest ──
+        queryAvailableResolutions();
+        if (!m_resolutions.empty()) {
+            // Default to highest resolution (last entry, sorted ascending by pixel count)
+            setResolution(static_cast<int32_t>(m_resolutions.size()) - 1);
         }
 
         LOGI("ARSessionManager::initialize - creating frame...");
@@ -330,6 +333,11 @@ namespace ar {
         m_loader.ArCameraConfig_destroy(tempConfig);
         m_loader.ArCameraConfigList_destroy(configList);
         m_loader.ArCameraConfigFilter_destroy(filter);
+
+        // Re-apply session config (depth, plane finding, etc.) before resuming
+        if (m_config) {
+            m_loader.ArSession_configure(m_session, m_config);
+        }
 
         // Resume session
         ArStatus st = m_loader.ArSession_resume(m_session);
