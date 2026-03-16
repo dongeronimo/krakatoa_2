@@ -281,7 +281,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     // Origin marker: small cube at (0,0,0) to visualize the world origin
     gOriginMarker = std::make_unique<graphics::Renderable>("origin_marker");
     gOriginMarker->SetMesh(gMeshes["cube"].get());
-    gOriginMarker->GetTransform().SetScale(glm::vec3(0.05f)); // 5 cm cube
+    gOriginMarker->GetTransform().SetScale(glm::vec3(0.01f)); // ~10 cm cube
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -523,7 +523,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     voxelCDO.Add(graphics::CDO::Keys::volume_image_view, gVoxelVolume->GetImageView());
     uint32_t positionCount = static_cast<uint32_t>(arDepthWidth) * static_cast<uint32_t>(arDepthHeight);
     voxelCDO.Add(graphics::CDO::Keys::position_count, positionCount);
-    voxelCDO.Add(graphics::CDO::Keys::voxel_scale, 100.0f); // 1 voxel = 1 cm
+    voxelCDO.Add(graphics::CDO::Keys::voxel_scale, 200.0f); // 1 voxel = 0.5 cm
     voxelCDO.Add(graphics::CDO::Keys::mc_volume_size_x, graphics::VoxelVolume::VOLUME_SIZE_X);
     voxelCDO.Add(graphics::CDO::Keys::mc_volume_size_y, graphics::VoxelVolume::VOLUME_SIZE_Y);
     voxelCDO.Add(graphics::CDO::Keys::mc_volume_size_z, graphics::VoxelVolume::VOLUME_SIZE_Z);
