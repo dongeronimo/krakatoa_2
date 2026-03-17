@@ -73,7 +73,6 @@ std::unique_ptr<graphics::GpuMesh> gWorldMesh = nullptr;
 std::unique_ptr<graphics::Texture2D> gMeshTexture = nullptr;
 std::unique_ptr<graphics::Pipeline> gWorldMeshPipeline = nullptr;
 std::unique_ptr<graphics::Renderable> gWorldMeshRenderable = nullptr;
-std::unique_ptr<graphics::Renderable> gOriginMarker = nullptr;
 // Marching cubes output capacity
 static constexpr uint32_t MC_MAX_VERTICES = 500'000;
 static constexpr uint32_t MC_MAX_INDICES  = 1'500'000;
@@ -278,10 +277,6 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     // Create a renderable for the world mesh (identity transform — mesh is already in world coords)
     gWorldMeshRenderable = std::make_unique<graphics::Renderable>("world_mesh");
     gWorldMeshRenderable->SetMesh(gWorldMesh.get());
-    // Origin marker: small cube at (0,0,0) to visualize the world origin
-    gOriginMarker = std::make_unique<graphics::Renderable>("origin_marker");
-    gOriginMarker->SetMesh(gMeshes["cube"].get());
-    gOriginMarker->GetTransform().SetScale(glm::vec3(0.01f)); // ~10 cm cube
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -523,10 +518,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     voxelCDO.Add(graphics::CDO::Keys::volume_image_view, gVoxelVolume->GetImageView());
     uint32_t positionCount = static_cast<uint32_t>(arDepthWidth) * static_cast<uint32_t>(arDepthHeight);
     voxelCDO.Add(graphics::CDO::Keys::position_count, positionCount);
-    voxelCDO.Add(graphics::CDO::Keys::voxel_scale, 200.0f); // 1 voxel = 0.5 cm
-    voxelCDO.Add(graphics::CDO::Keys::mc_volume_size_x, graphics::VoxelVolume::VOLUME_SIZE_X);
-    voxelCDO.Add(graphics::CDO::Keys::mc_volume_size_y, graphics::VoxelVolume::VOLUME_SIZE_Y);
-    voxelCDO.Add(graphics::CDO::Keys::mc_volume_size_z, graphics::VoxelVolume::VOLUME_SIZE_Z);
+    voxelCDO.Add(graphics::CDO::Keys::voxel_scale, 100.0f); // 1 voxel = 1 cm
+    voxelCDO.Add(graphics::CDO::Keys::mc_volume_size, graphics::VoxelVolume::VOLUME_SIZE);
     gVoxelizationPipeline->Dispatch(cmd, frameIndex, voxelCDO);
     // Memory barrier: voxelization writes to the 3D image must complete before marching cubes reads it
     VkMemoryBarrier voxelBarrier{};
@@ -825,26 +818,6 @@ void DrawOffscreenRenderPass(VkCommandBuffer cmd, const uint32_t frameIndex){
         gTransparentPhongPipeline->Draw(cmd, &rdo, plane.second.get(), frameIndex);
         auto msg = Concatenate("[arplanes] drew plane ", plane.second->GetId());
         LOGI("%s", msg.c_str());
-    }
-    // Draw origin marker cube at (0,0,0) — red, opaque, for debugging world origin
-    if (gUnshadedOpaquePipeline && gOriginMarker) {
-        graphics::RDO rdo;
-        rdo.Add(graphics::RDO::Keys::MODEL_MAT, gOriginMarker->GetTransform().GetWorldMatrix());
-
-        std::array<float,16> arViewMatrix{};
-        gArSessionManager->getViewMatrix(arViewMatrix.data());
-        glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
-        rdo.Add(graphics::RDO::Keys::VIEW_MAT, viewMat);
-
-        std::array<float,16> arProjMatrix{};
-        gArSessionManager->getProjectionMatrix(0.01f, 100.f, arProjMatrix.data());
-        glm::mat4 projMat = glm::make_mat4(arProjMatrix.data());
-        rdo.Add(graphics::RDO::Keys::PROJ_MAT, projMat);
-
-        rdo.Add(graphics::RDO::Keys::COLOR, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)); // red
-
-        gUnshadedOpaquePipeline->Bind(cmd);
-        gUnshadedOpaquePipeline->Draw(cmd, &rdo, gOriginMarker.get(), frameIndex);
     }
     // Draw the reconstructed world mesh (marching cubes output)
     // Note: index count is checked GPU-side via indirect draw, not CPU-side

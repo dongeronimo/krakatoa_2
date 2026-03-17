@@ -47,10 +47,8 @@ namespace graphics {
             mc_max_vertices,
             //marching cubes max indices capacity
             mc_max_indices,
-            //volume dimensions (per-axis)
-            mc_volume_size_x,
-            mc_volume_size_y,
-            mc_volume_size_z
+            //volume side length (e.g. 256)
+            mc_volume_size
         };
         void Add(Keys k, float v){
             floatTable.insert({k, v});
