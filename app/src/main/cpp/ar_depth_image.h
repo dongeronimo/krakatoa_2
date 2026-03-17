@@ -46,4 +46,4 @@ namespace graphics {
 }
 
 
-#endif //KRAKATOA_AR_DEPTH_IMAGE_H
+#endif //KRAKATOA_AR_DEPTH_H

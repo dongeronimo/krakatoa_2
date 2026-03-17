@@ -139,6 +139,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         gpu_mesh.h
         CDO.h
         cdo.cpp
+        reconstruction/ar_depth.h
+        reconstruction/ar_depth.cpp
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
