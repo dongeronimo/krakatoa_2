@@ -42,6 +42,7 @@
 #include "CDO.h"
 #include "vk_debug.h"
 #include "reconstruction/ar_depth.h"
+
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
@@ -78,9 +79,9 @@ std::unique_ptr<graphics::Renderable> gWorldMeshRenderable = nullptr;
 /**
  * Callback to create the ar depth buffer vulkan infra
  * */
-reconstruction::OnArDepthCreate OnArDepthCreate = [](reconstruction::ArDepth* arDepth){
+reconstruction::OnArDepthCreate OnArDepthCreate = [](reconstruction::ArDepth *arDepth) {
     size_t sizeInBytes = arDepth->Width * arDepth->Height * sizeof(float) * 4;
-    for(int i=0; i<MAX_FRAMES_IN_FLIGHT; i++){
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         //deproject: create the output buffer
         VkBufferCreateInfo bufferInfo{};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -110,17 +111,19 @@ reconstruction::OnArDepthCreate OnArDepthCreate = [](reconstruction::ArDepth* ar
 };
 // Marching cubes output capacity
 static constexpr uint32_t MC_MAX_VERTICES = 500'000;
-static constexpr uint32_t MC_MAX_INDICES  = 1'500'000;
+static constexpr uint32_t MC_MAX_INDICES = 1'500'000;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
-        JNIEnv* env,
+        JNIEnv *env,
         jobject /* this */) {
     std::string hello = "Hello from C++";
     return env->NewStringUTF(hello.c_str());
 }
 
 void UpdateARPlanes();
+
 void DrawOffscreenRenderPass(VkCommandBuffer cmd, const uint32_t frameIndex);
+
 extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCreated(JNIEnv *env,
@@ -130,8 +133,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                                                                                     jobject activity) {
     bool loadedArcore = ar::LoadARCore();
 
-    AAssetManager* nativeAssetManager = AAssetManager_fromJava(env, asset_manager);
-    assert(nativeAssetManager!= nullptr);//i MUST have the asset loader
+    AAssetManager *nativeAssetManager = AAssetManager_fromJava(env, asset_manager);
+    assert(nativeAssetManager != nullptr);//i MUST have the asset loader
     io::AssetLoader::initialize(nativeAssetManager);
 
     assert(loadedArcore);//i need arcore.
@@ -139,7 +142,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     gVkContext = std::make_unique<graphics::VkContext>();
     bool initializedOk = gVkContext->Initialize();
     assert(initializedOk);
-    ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
+    ANativeWindow *window = ANativeWindow_fromSurface(env, surface);
     bool surfaceOk = gVkContext->CreateSurface(window);
     assert(surfaceOk);
     gVkContext->CreateSwapchain(ANativeWindow_getWidth(window), ANativeWindow_getHeight(window));
@@ -150,7 +153,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     gOffscreenRenderPass = std::make_unique<graphics::OffscreenRenderPass>(gVkContext->GetDevice(),
                                                                            gVkContext->GetAllocator(),
                                                                            100, 100);
-    auto unshadedOpaqueDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
+    auto unshadedOpaqueDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(
+            gVkContext->GetDevice())
             .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
             .Build();
     descriptorSetLayouts.insert({"unshaded_opaque", unshadedOpaqueDescriptorSetLayout});
@@ -159,7 +163,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .Build();
     pipelineLayouts.insert({"unshaded_opaque", unshadedOpaquePipelineLayout});
     // Transparent Phong: UBO (binding 0, vert+frag) + texture sampler (binding 1, frag)
-    auto transPhongDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
+    auto transPhongDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(
+            gVkContext->GetDevice())
             .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
             .AddBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
@@ -190,19 +195,25 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .Build();
     pipelineLayouts.insert({"compose", composePipelineLayout});
     // Depth deprojection compute pipeline.
-    auto deprojectDescriptorSetLayout = graphics::DepthDeprojectionDescriptorSetLayout(gVkContext->GetDevice());
+    auto deprojectDescriptorSetLayout = graphics::DepthDeprojectionDescriptorSetLayout(
+            gVkContext->GetDevice());
     descriptorSetLayouts.insert({"compute_depth_deprojection", deprojectDescriptorSetLayout});
-    auto deprojectPipelineLayout = graphics::DepthDeprojectionPipelineLayout(gVkContext->GetDevice(), deprojectDescriptorSetLayout);
+    auto deprojectPipelineLayout = graphics::DepthDeprojectionPipelineLayout(
+            gVkContext->GetDevice(), deprojectDescriptorSetLayout);
     pipelineLayouts.insert({"compute_depth_deprojection", deprojectPipelineLayout});
     // Voxelization compute pipeline.
-    auto voxelDescriptorSetLayout = graphics::VoxelizationDescriptorSetLayout(gVkContext->GetDevice());
+    auto voxelDescriptorSetLayout = graphics::VoxelizationDescriptorSetLayout(
+            gVkContext->GetDevice());
     descriptorSetLayouts.insert({"compute_voxelization", voxelDescriptorSetLayout});
-    auto voxelPipelineLayout = graphics::VoxelizationPipelineLayout(gVkContext->GetDevice(), voxelDescriptorSetLayout);
+    auto voxelPipelineLayout = graphics::VoxelizationPipelineLayout(gVkContext->GetDevice(),
+                                                                    voxelDescriptorSetLayout);
     pipelineLayouts.insert({"compute_voxelization", voxelPipelineLayout});
     // Marching cubes compute pipeline.
-    auto mcDescriptorSetLayout = graphics::MarchingCubesDescriptorSetLayout(gVkContext->GetDevice());
+    auto mcDescriptorSetLayout = graphics::MarchingCubesDescriptorSetLayout(
+            gVkContext->GetDevice());
     descriptorSetLayouts.insert({"compute_marching_cubes", mcDescriptorSetLayout});
-    auto mcPipelineLayout = graphics::MarchingCubesPipelineLayout(gVkContext->GetDevice(), mcDescriptorSetLayout);
+    auto mcPipelineLayout = graphics::MarchingCubesPipelineLayout(gVkContext->GetDevice(),
+                                                                  mcDescriptorSetLayout);
     pipelineLayouts.insert({"compute_marching_cubes", mcPipelineLayout});
 
     ANativeWindow_release(window);
@@ -213,7 +224,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                                                                          gVkContext->getComputeQueue(),
                                                                          gVkContext->getTransferQueue());
     //creates the frame sync object
-    gFrameSync = std::make_unique<graphics::FrameSync>(gVkContext->GetDevice(), gVkContext->getSwapchainImageCount());
+    gFrameSync = std::make_unique<graphics::FrameSync>(gVkContext->GetDevice(),
+                                                       gVkContext->getSwapchainImageCount());
     //Load meshes
     {
         io::MeshLoader meshLoader;
@@ -271,27 +283,25 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     gArSessionManager->onResume();
     //camera feed -> vulkan image (ring buffered, CPU upload, no OES)
     gCameraImage = std::make_unique<graphics::ARCameraImage>(gVkContext->GetDevice(),
-                                                              gVkContext->GetAllocator());
+                                                             gVkContext->GetAllocator());
     //create the ar depth buffer object
     reconstruction::ArDepth::Initialize(gVkContext->GetDevice(), gVkContext->GetAllocator(),
                                         OnArDepthCreate);
-//    gArDepthImage = std::make_unique<graphics::ArDepthImage>(gVkContext->GetDevice(),
-//                                                             gVkContext->GetAllocator(),
-//                                                             "ArDepthImage");
+
 
     // create the output object for deprojection - still need to create the actual buffers once i know the size of the depth buffer
     gDepthDeprojectionOutput = std::make_unique<graphics::DepthDeprojectionOutput>();
     // create the voxel volume (1024³ R8_UINT 3D texture, cleared to zero)
     gVoxelVolume = std::make_unique<graphics::VoxelVolume>(gVkContext->GetDevice(),
-                                                            gVkContext->GetAllocator(),
-                                                            *gCommandPoolManager,
-                                                            "VoxelVolume");
+                                                           gVkContext->GetAllocator(),
+                                                           *gCommandPoolManager,
+                                                           "VoxelVolume");
     // create the GPU mesh for marching cubes output
     gWorldMesh = std::make_unique<graphics::GpuMesh>(gVkContext->GetDevice(),
-                                                      gVkContext->GetAllocator(),
-                                                      MC_MAX_VERTICES,
-                                                      MC_MAX_INDICES,
-                                                      "WorldMesh");
+                                                     gVkContext->GetAllocator(),
+                                                     MC_MAX_VERTICES,
+                                                     MC_MAX_INDICES,
+                                                     "WorldMesh");
     // Load mesh texture for the world mesh (transparent phong shading).
     // Uses textures/mesh.png if available; nullptr triggers a placeholder in the pipeline.
     if (io::AssetLoader::exists("textures/mesh.png")) {
@@ -331,7 +341,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
     else
         gVkContext->RecreateSwapchain(width, height);
     gSwapChainRenderPass->Recreate(gVkContext->getSwapchainImageViews(),
-                                  gVkContext->getSwapchainExtent());
+                                   gVkContext->getSwapchainExtent());
     gOffscreenRenderPass->Resize(gVkContext->getSwapchainExtent().width,
                                  gVkContext->getSwapchainExtent().height);
     gUnshadedOpaquePipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
@@ -341,33 +351,36 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                                    pipelineLayouts["unshaded_opaque"],
                                                                    descriptorSetLayouts["unshaded_opaque"]);
     gTransparentPhongPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
-                                                                      gVkContext->GetDevice(),
-                                                                      gVkContext->GetAllocator(),
-                                                                      graphics::TransparentPhongConfig(gGridTexture.get()),
-                                                                      pipelineLayouts["transparent_phong"],
-                                                                      descriptorSetLayouts["transparent_phong"]);
+                                                                     gVkContext->GetDevice(),
+                                                                     gVkContext->GetAllocator(),
+                                                                     graphics::TransparentPhongConfig(
+                                                                             gGridTexture.get()),
+                                                                     pipelineLayouts["transparent_phong"],
+                                                                     descriptorSetLayouts["transparent_phong"]);
     // World mesh pipeline: separate transparent phong instance with mesh.png texture
     // (or placeholder if mesh.png not yet provided)
     gWorldMeshPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
-                                                               gVkContext->GetDevice(),
-                                                               gVkContext->GetAllocator(),
-                                                               graphics::TransparentPhongConfig(gMeshTexture.get()),
-                                                               pipelineLayouts["transparent_phong"],
-                                                               descriptorSetLayouts["transparent_phong"]);
-    gCameraBgPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
                                                               gVkContext->GetDevice(),
                                                               gVkContext->GetAllocator(),
-                                                              graphics::CameraBackgroundConfig(
-                                                                      gCameraImage.get(),
-                                                                      &gDisplayRotation),
-                                                              pipelineLayouts["camera_bg"],
-                                                              descriptorSetLayouts["camera_bg"]);
-    gComposePipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
+                                                              graphics::TransparentPhongConfig(
+                                                                      gMeshTexture.get()),
+                                                              pipelineLayouts["transparent_phong"],
+                                                              descriptorSetLayouts["transparent_phong"]);
+    gCameraBgPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
                                                              gVkContext->GetDevice(),
                                                              gVkContext->GetAllocator(),
-                                                             graphics::ComposeConfig(gOffscreenRenderPass.get()),
-                                                             pipelineLayouts["compose"],
-                                                             descriptorSetLayouts["compose"]);
+                                                             graphics::CameraBackgroundConfig(
+                                                                     gCameraImage.get(),
+                                                                     &gDisplayRotation),
+                                                             pipelineLayouts["camera_bg"],
+                                                             descriptorSetLayouts["camera_bg"]);
+    gComposePipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
+                                                            gVkContext->GetDevice(),
+                                                            gVkContext->GetAllocator(),
+                                                            graphics::ComposeConfig(
+                                                                    gOffscreenRenderPass.get()),
+                                                            pipelineLayouts["compose"],
+                                                            descriptorSetLayouts["compose"]);
     gFrameSync->RecreateForSwapchain(gVkContext->getSwapchainImageCount());
 }
 extern "C"
@@ -415,195 +428,152 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     // TODO refactor: move all this volume building shit to some kind of subsystem to clean up the main loop
     /////////////////////////////
     auto arDepth = reconstruction::ArDepth::GetDepth(*gArSessionManager);
-    // get the ar depth image handle in arcore
-//    ArImage* depthImageHandle = gArSessionManager->getDepthImage();
     // Skip the entire compute pipeline if ARCore doesn't have a depth frame yet.
     // This happens during the first few frames before the Depth API is fully initialized.
     if (arDepth != nullptr) {
-        // get the depth image dimensions
-    //    int32_t arDepthWidth = 0; int32_t arDepthHeight = 0;
-    //    gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
-//        if(previousArDepthWidth == 0) {
-//            assert(gDeprojectionPipeline == nullptr);
-//            previousArDepthWidth = arDepthWidth;
-//            //deproject: Create the output ring buffer. Size = vec4 * arDepthWidth * arDepthHeight
-//            assert(gDepthDeprojectionOutput);
-//            assert(arDepthWidth > 0 && arDepthHeight > 0 && "Depth image has zero dimensions");
-//            size_t sizeInBytes = arDepthHeight * arDepthWidth * sizeof(float) * 4;
-//            for(int i=0; i<MAX_FRAMES_IN_FLIGHT; i++){
-//                //TODO deproject (done): create the output buffer
-//                VkBufferCreateInfo bufferInfo{};
-//                bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-//                bufferInfo.size = sizeInBytes;
-//                bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;  // for compute read/write
-//                VmaAllocationCreateInfo allocInfo{};
-//                allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
-//                VkBuffer buffer = VK_NULL_HANDLE;
-//                VmaAllocation allocation = VK_NULL_HANDLE;
-//                VkResult vmaResult = vmaCreateBuffer(gVkContext->GetAllocator(),
-//                                &bufferInfo, &allocInfo,
-//                                &buffer, &allocation, nullptr);
-//                assert(vmaResult == VK_SUCCESS && "Failed to allocate deprojection output buffer");
-//                //TODO deproject (done): put in the ring buffer
-//                gDepthDeprojectionOutput->outputBuffer[i] = buffer;
-//                gDepthDeprojectionOutput->outputBufferAllocation[i] = allocation;
-//                gDepthDeprojectionOutput->outputBufferSize[i] = sizeInBytes;
-//                //TODO deproject (done): advance the ring buffers
-//                gDepthDeprojectionOutput->outputBuffer.Next();
-//                gDepthDeprojectionOutput->outputBufferAllocation.Next();
-//                gDepthDeprojectionOutput->outputBufferSize.Next();
-//                //TODO deproject (done): name the things
-//                graphics::debug::SetBufferName(gVkContext->GetDevice(),
-//                                           gDepthDeprojectionOutput->outputBuffer[i],
-//                                           Concatenate("DepthDeprojectOutput ", i));
-//            }
-//        }
-//        else {
-//            assert(previousArDepthWidth == arDepthWidth);// I can't deal with changing depth buffer size right now, it breaks the output of the deproject compute shader
-//        }
-    // create the deprojection compute shader pipeline, lazily, because thats the moment i have enough data to do so
-    if(gDeprojectionPipeline == nullptr) {
-        graphics::ComputePipelineConfig deprojectionConfig = graphics::DepthDeprojectConfig(
-                gVkContext->GetAllocator());
-        gDeprojectionPipeline = std::make_unique<graphics::ComputePipeline>(gVkContext->GetDevice(),
-                                                                            gVkContext->GetAllocator(),
-                                                                            deprojectionConfig,
-                                                                            pipelineLayouts["compute_depth_deprojection"],
-                                                                            descriptorSetLayouts["compute_depth_deprojection"]);
-    }
-    // get the image data
-//    int32_t depthStride = 0; std::vector<uint16_t> depthData{};
-//    gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
-//    gArSessionManager->releaseDepthImage(depthImageHandle);//must release the image
-    // TODO deproject (done): Advance ar depth ring buffers
+        // create the deprojection compute shader pipeline, lazily, because thats the moment i have enough data to do so
+        if (gDeprojectionPipeline == nullptr) {
+            graphics::ComputePipelineConfig deprojectionConfig = graphics::DepthDeprojectConfig(
+                    gVkContext->GetAllocator());
+            gDeprojectionPipeline = std::make_unique<graphics::ComputePipeline>(
+                    gVkContext->GetDevice(),
+                    gVkContext->GetAllocator(),
+                    deprojectionConfig,
+                    pipelineLayouts["compute_depth_deprojection"],
+                    descriptorSetLayouts["compute_depth_deprojection"]);
+        }
+        // deproject: Advance ar depth ring buffers
         arDepth->UpdateWithMostRecent();
-//    gArDepthImage->Advance();
-    // TODO deproject (done): Create or update the current ar depth image in vulkan
-//    gArDepthImage->UpdateImage(depthData, {(uint32_t)arDepthWidth, (uint32_t)arDepthHeight});
-    // Advance the output ring buffers for deprojection
-    gDepthDeprojectionOutput->outputBuffer.Next();
-    gDepthDeprojectionOutput->outputBufferAllocation.Next();
-    gDepthDeprojectionOutput->outputBufferSize.Next();
-    // Get the intrinsics
-    ar::ArDepthIntrinsics arDepthIntrinsics{};
-    gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
-    // Get the view inverse matrix for camera→world transform
-    std::array<float,16> arViewMatrix{};
-    gArSessionManager->getViewMatrix(arViewMatrix.data());
-    glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
-    glm::mat4 viewInvMat = glm::inverse(viewMat);
-    std::array<float,16> viewInvArray{};
-    memcpy(viewInvArray.data(), glm::value_ptr(viewInvMat), sizeof(float) * 16);
-    // Skip dispatch if the depth buffer hasn't been uploaded yet (first frame
-    // after Advance — the ring buffer slot is still VK_NULL_HANDLE until the
-    // next Advance propagates the pending upload).
-    VkBuffer currentDepthBuffer = arDepth->GetCurrentBuffer();
-    if (currentDepthBuffer != VK_NULL_HANDLE) {
-    // Build the CDO with all data the dispatch callback needs
-    graphics::CDO deprojectCDO;
-    // Scale camera intrinsics to depth image resolution.
-    // ARCore's ArCamera_getImageIntrinsics returns values for the full camera
-    // image, but the depth image is typically much smaller (e.g. 160x120 vs
-    // 1920x1080). Intrinsics scale linearly with resolution.
-    float scaleX = static_cast<float>(arDepth->Width)  / static_cast<float>(arDepthIntrinsics.w);
-    float scaleY = static_cast<float>(arDepth->Height) / static_cast<float>(arDepthIntrinsics.h);
-    deprojectCDO.Add(graphics::CDO::Keys::fx, arDepthIntrinsics.fx * scaleX);
-    deprojectCDO.Add(graphics::CDO::Keys::fy, arDepthIntrinsics.fy * scaleY);
-    deprojectCDO.Add(graphics::CDO::Keys::cx, arDepthIntrinsics.cx * scaleX);
-    deprojectCDO.Add(graphics::CDO::Keys::cy, arDepthIntrinsics.cy * scaleY);
-    deprojectCDO.Add(graphics::CDO::Keys::width, static_cast<int32_t>(arDepth->Width));
-    deprojectCDO.Add(graphics::CDO::Keys::height, static_cast<int32_t>(arDepth->Height));
-    deprojectCDO.Add(graphics::CDO::Keys::uint16_buffer, currentDepthBuffer);
-    deprojectCDO.Add(graphics::CDO::Keys::vec4_buffer, gDepthDeprojectionOutput->outputBuffer.Current());
-    deprojectCDO.Add(graphics::CDO::Keys::view_inverse, viewInvArray);
-    // Dispatch the deprojection compute shader
-    gDeprojectionPipeline->Dispatch(cmd, frameIndex, deprojectCDO);
-    // Memory barrier: ensure compute shader writes to output SSBO are visible
-    // before any subsequent reads (next compute pass or vertex shader).
-    VkMemoryBarrier computeBarrier{};
-    computeBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    computeBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    computeBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-                         0,
-                         1, &computeBarrier,
-                         0, nullptr,
-                         0, nullptr);
-    } // currentDepthBuffer != VK_NULL_HANDLE
-    // Lazily create the voxelization compute pipeline
-    if (gVoxelizationPipeline == nullptr) {
-        graphics::ComputePipelineConfig voxelConfig = graphics::VoxelizationConfig();
-        gVoxelizationPipeline = std::make_unique<graphics::ComputePipeline>(
-                gVkContext->GetDevice(),
-                gVkContext->GetAllocator(),
-                voxelConfig,
-                pipelineLayouts["compute_voxelization"],
-                descriptorSetLayouts["compute_voxelization"]);
-    }
-    // Voxelization: accumulate deprojected positions into the 3D volume
-    graphics::CDO voxelCDO;
-    voxelCDO.Add(graphics::CDO::Keys::vec4_buffer, gDepthDeprojectionOutput->outputBuffer.Current());
-    voxelCDO.Add(graphics::CDO::Keys::volume_image_view, gVoxelVolume->GetImageView());
-    uint32_t positionCount = static_cast<uint32_t>(arDepth->Width) *
-            static_cast<uint32_t>(arDepth->Height);
-    voxelCDO.Add(graphics::CDO::Keys::position_count, positionCount);
-    voxelCDO.Add(graphics::CDO::Keys::voxel_scale, 100.0f); // 1 voxel = 1 cm
-    voxelCDO.Add(graphics::CDO::Keys::mc_volume_size, graphics::VoxelVolume::VOLUME_SIZE);
-    gVoxelizationPipeline->Dispatch(cmd, frameIndex, voxelCDO);
-    // Memory barrier: voxelization writes to the 3D image must complete before marching cubes reads it
-    VkMemoryBarrier voxelBarrier{};
-    voxelBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    voxelBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    voxelBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         0,
-                         1, &voxelBarrier,
-                         0, nullptr,
-                         0, nullptr);
-    // Lazily create the marching cubes compute pipeline
-    if (gMarchingCubesPipeline == nullptr) {
-        graphics::ComputePipelineConfig mcConfig = graphics::MarchingCubesConfig(
-                gVkContext->GetAllocator());
-        gMarchingCubesPipeline = std::make_unique<graphics::ComputePipeline>(
-                gVkContext->GetDevice(),
-                gVkContext->GetAllocator(),
-                mcConfig,
-                pipelineLayouts["compute_marching_cubes"],
-                descriptorSetLayouts["compute_marching_cubes"]);
-    }
-    // Reset mesh counters before dispatch
-    gWorldMesh->ResetCounters();
-    // Marching cubes: generate mesh from voxel volume
-    graphics::CDO mcCDO;
-    mcCDO.Add(graphics::CDO::Keys::volume_image_view, gVoxelVolume->GetImageView());
-    mcCDO.Add(graphics::CDO::Keys::mc_vertex_buffer, gWorldMesh->GetVertexStorageBuffer());
-    mcCDO.Add(graphics::CDO::Keys::mc_index_buffer, gWorldMesh->GetIndexStorageBuffer());
-    mcCDO.Add(graphics::CDO::Keys::mc_counter_buffer, gWorldMesh->GetCounterBuffer());
-    mcCDO.Add(graphics::CDO::Keys::mc_cutoff, static_cast<uint32_t>(127));
-    mcCDO.Add(graphics::CDO::Keys::voxel_scale, 100.0f);
-    mcCDO.Add(graphics::CDO::Keys::mc_max_distance, 2.0f);
-    mcCDO.Add(graphics::CDO::Keys::mc_max_vertices, MC_MAX_VERTICES);
-    mcCDO.Add(graphics::CDO::Keys::mc_max_indices, MC_MAX_INDICES);
-    gMarchingCubesPipeline->Dispatch(cmd, frameIndex, mcCDO);
-    // Memory barrier: marching cubes writes to vertex/index buffers must complete
-    // before the graphics pipeline reads them for rendering
-    VkMemoryBarrier mcBarrier{};
-    mcBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    mcBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    mcBarrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
-    vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0,
-                         1, &mcBarrier,
-                         0, nullptr,
-                         0, nullptr);
-    // Prepare indirect draw: copy GPU-written index count into the indirect draw buffer
-    gWorldMesh->PrepareIndirectDraw(cmd);
+        // Advance the output ring buffers for deprojection
+        gDepthDeprojectionOutput->outputBuffer.Next();
+        gDepthDeprojectionOutput->outputBufferAllocation.Next();
+        gDepthDeprojectionOutput->outputBufferSize.Next();
+        // Get the intrinsics
+        //ar::ArDepthIntrinsics arDepthIntrinsics{};
+        //gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
+        // Get the view inverse matrix for camera→world transform
+        std::array<float, 16> arViewMatrix{};
+        gArSessionManager->getViewMatrix(arViewMatrix.data());
+        glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
+        glm::mat4 viewInvMat = glm::inverse(viewMat);
+        std::array<float, 16> viewInvArray{};
+        memcpy(viewInvArray.data(), glm::value_ptr(viewInvMat), sizeof(float) * 16);
+        // Skip dispatch if the depth buffer hasn't been uploaded yet (first frame
+        // after Advance — the ring buffer slot is still VK_NULL_HANDLE until the
+        // next Advance propagates the pending upload).
+        VkBuffer currentDepthBuffer = arDepth->GetCurrentBuffer();
+        if (currentDepthBuffer != VK_NULL_HANDLE) {
+            // Build the CDO with all data the dispatch callback needs
+            graphics::CDO deprojectCDO;
+            // Scale camera intrinsics to depth image resolution.
+            // ARCore's ArCamera_getImageIntrinsics returns values for the full camera
+            // image, but the depth image is typically much smaller (e.g. 160x120 vs
+            // 1920x1080). Intrinsics scale linearly with resolution.
+            float scaleX =
+                    static_cast<float>(arDepth->Width) / static_cast<float>(arDepth->Width);
+            float scaleY =
+                    static_cast<float>(arDepth->Height) / static_cast<float>(arDepth->Height);
+            deprojectCDO.Add(graphics::CDO::Keys::fx, arDepth->GetInstrinsics().fx * scaleX);
+            deprojectCDO.Add(graphics::CDO::Keys::fy, arDepth->GetInstrinsics().fy * scaleY);
+            deprojectCDO.Add(graphics::CDO::Keys::cx, arDepth->GetInstrinsics().cx * scaleX);
+            deprojectCDO.Add(graphics::CDO::Keys::cy, arDepth->GetInstrinsics().cy * scaleY);
+            deprojectCDO.Add(graphics::CDO::Keys::width, static_cast<int32_t>(arDepth->Width));
+            deprojectCDO.Add(graphics::CDO::Keys::height, static_cast<int32_t>(arDepth->Height));
+            deprojectCDO.Add(graphics::CDO::Keys::uint16_buffer, currentDepthBuffer);
+            deprojectCDO.Add(graphics::CDO::Keys::vec4_buffer,
+                             gDepthDeprojectionOutput->outputBuffer.Current());
+            deprojectCDO.Add(graphics::CDO::Keys::view_inverse, viewInvArray);
+            // Dispatch the deprojection compute shader
+            gDeprojectionPipeline->Dispatch(cmd, frameIndex, deprojectCDO);
+            // Memory barrier: ensure compute shader writes to output SSBO are visible
+            // before any subsequent reads (next compute pass or vertex shader).
+            VkMemoryBarrier computeBarrier{};
+            computeBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            computeBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            computeBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cmd,
+                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                                 VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                                 0,
+                                 1, &computeBarrier,
+                                 0, nullptr,
+                                 0, nullptr);
+        } // currentDepthBuffer != VK_NULL_HANDLE
+        // Lazily create the voxelization compute pipeline
+        if (gVoxelizationPipeline == nullptr) {
+            graphics::ComputePipelineConfig voxelConfig = graphics::VoxelizationConfig();
+            gVoxelizationPipeline = std::make_unique<graphics::ComputePipeline>(
+                    gVkContext->GetDevice(),
+                    gVkContext->GetAllocator(),
+                    voxelConfig,
+                    pipelineLayouts["compute_voxelization"],
+                    descriptorSetLayouts["compute_voxelization"]);
+        }
+        // Voxelization: accumulate deprojected positions into the 3D volume
+        graphics::CDO voxelCDO;
+        voxelCDO.Add(graphics::CDO::Keys::vec4_buffer,
+                     gDepthDeprojectionOutput->outputBuffer.Current());
+        voxelCDO.Add(graphics::CDO::Keys::volume_image_view, gVoxelVolume->GetImageView());
+        uint32_t positionCount = static_cast<uint32_t>(arDepth->Width) *
+                                 static_cast<uint32_t>(arDepth->Height);
+        voxelCDO.Add(graphics::CDO::Keys::position_count, positionCount);
+        voxelCDO.Add(graphics::CDO::Keys::voxel_scale, 100.0f); // 1 voxel = 1 cm
+        voxelCDO.Add(graphics::CDO::Keys::mc_volume_size, graphics::VoxelVolume::VOLUME_SIZE);
+        gVoxelizationPipeline->Dispatch(cmd, frameIndex, voxelCDO);
+        // Memory barrier: voxelization writes to the 3D image must complete before marching cubes reads it
+        VkMemoryBarrier voxelBarrier{};
+        voxelBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        voxelBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        voxelBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0,
+                             1, &voxelBarrier,
+                             0, nullptr,
+                             0, nullptr);
+        // Lazily create the marching cubes compute pipeline
+        if (gMarchingCubesPipeline == nullptr) {
+            graphics::ComputePipelineConfig mcConfig = graphics::MarchingCubesConfig(
+                    gVkContext->GetAllocator());
+            gMarchingCubesPipeline = std::make_unique<graphics::ComputePipeline>(
+                    gVkContext->GetDevice(),
+                    gVkContext->GetAllocator(),
+                    mcConfig,
+                    pipelineLayouts["compute_marching_cubes"],
+                    descriptorSetLayouts["compute_marching_cubes"]);
+        }
+        // Reset mesh counters before dispatch
+        gWorldMesh->ResetCounters();
+        // Marching cubes: generate mesh from voxel volume
+        graphics::CDO mcCDO;
+        mcCDO.Add(graphics::CDO::Keys::volume_image_view, gVoxelVolume->GetImageView());
+        mcCDO.Add(graphics::CDO::Keys::mc_vertex_buffer, gWorldMesh->GetVertexStorageBuffer());
+        mcCDO.Add(graphics::CDO::Keys::mc_index_buffer, gWorldMesh->GetIndexStorageBuffer());
+        mcCDO.Add(graphics::CDO::Keys::mc_counter_buffer, gWorldMesh->GetCounterBuffer());
+        mcCDO.Add(graphics::CDO::Keys::mc_cutoff, static_cast<uint32_t>(127));
+        mcCDO.Add(graphics::CDO::Keys::voxel_scale, 100.0f);
+        mcCDO.Add(graphics::CDO::Keys::mc_max_distance, 2.0f);
+        mcCDO.Add(graphics::CDO::Keys::mc_max_vertices, MC_MAX_VERTICES);
+        mcCDO.Add(graphics::CDO::Keys::mc_max_indices, MC_MAX_INDICES);
+        gMarchingCubesPipeline->Dispatch(cmd, frameIndex, mcCDO);
+        // Memory barrier: marching cubes writes to vertex/index buffers must complete
+        // before the graphics pipeline reads them for rendering
+        VkMemoryBarrier mcBarrier{};
+        mcBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mcBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        mcBarrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT |
+                                  VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(cmd,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0,
+                             1, &mcBarrier,
+                             0, nullptr,
+                             0, nullptr);
+        // Prepare indirect draw: copy GPU-written index count into the indirect draw buffer
+        gWorldMesh->PrepareIndirectDraw(cmd);
     } // depthImageHandle != nullptr
 
     ////////////////////////////
@@ -671,12 +641,11 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     gCameraImage = nullptr;
     gArSessionManager.release();
     gMeshes.clear();
-    for (const auto& [key, value] : descriptorSetLayouts) {
+    for (const auto &[key, value]: descriptorSetLayouts) {
         vkDestroyDescriptorSetLayout(gVkContext->GetDevice(), value, nullptr);
     }
 
-    for (const auto& [key, value] : pipelineLayouts)
-    {
+    for (const auto &[key, value]: pipelineLayouts) {
         vkDestroyPipelineLayout(gVkContext->GetDevice(), value, nullptr);
     }
     gMarchingCubesPipeline = nullptr;
@@ -707,7 +676,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnResume(JNIE
     if (gFrameTimer) {
         gFrameTimer->Resume();
     }
-    if(gArSessionManager)
+    if (gArSessionManager)
         gArSessionManager->onResume();
 }
 extern "C"
@@ -741,13 +710,13 @@ JNIEXPORT jintArray JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeGetAvailableResolutions(
         JNIEnv *env, jobject thiz) {
     if (!gArSessionManager) return nullptr;
-    const auto& resolutions = gArSessionManager->getAvailableResolutions();
+    const auto &resolutions = gArSessionManager->getAvailableResolutions();
     // Return flat array: [w0, h0, w1, h1, ...]
     jintArray result = env->NewIntArray(static_cast<jsize>(resolutions.size() * 2));
     if (!result) return nullptr;
     std::vector<jint> flat(resolutions.size() * 2);
     for (size_t i = 0; i < resolutions.size(); ++i) {
-        flat[i * 2]     = resolutions[i].width;
+        flat[i * 2] = resolutions[i].width;
         flat[i * 2 + 1] = resolutions[i].height;
     }
     env->SetIntArrayRegion(result, 0, static_cast<jsize>(flat.size()), flat.data());
@@ -769,12 +738,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeSetResolution
 }
 
 void UpdateARPlanes() {
-    for(auto p:gArPlanes){
+    for (auto p: gArPlanes) {
         //std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
-        ((graphics::MutableMesh*)p.second->GetMesh())->Advance();
+        ((graphics::MutableMesh *) p.second->GetMesh())->Advance();
     }
-    gArSessionManager->forEachPlane([&](int64_t planeid, const float* modelMat,
-                                        const float* polygon, int polyFloatCount){
+    gArSessionManager->forEachPlane([&](int64_t planeid, const float *modelMat,
+                                        const float *polygon, int polyFloatCount) {
         // Generate the mesh from the polygon contour (centroid fan)
         auto meshData = io::GenerateARPlaneMesh(polygon, polyFloatCount, 1.0f);
         // nothing, leave this functions
@@ -784,11 +753,12 @@ void UpdateARPlanes() {
         assert(meshData->vertexCount > 0);
         //TODO: Seek renderables by plane id
         auto itPlanes = gArPlanes.find(planeid);
-        if(itPlanes == gArPlanes.end()) {
+        if (itPlanes == gArPlanes.end()) {
             //no plane with this id, create a new renderable, with a new mutable mesh and add to the plane.
             auto name = Concatenate("AR_PLANE ", planeid);
-            std::shared_ptr<graphics::Renderable> newRenderable = std::make_shared<graphics::Renderable>(planeid);
-            graphics::MutableMesh* newMesh = new graphics::MutableMesh(gVkContext->GetDevice(),
+            std::shared_ptr<graphics::Renderable> newRenderable = std::make_shared<graphics::Renderable>(
+                    planeid);
+            graphics::MutableMesh *newMesh = new graphics::MutableMesh(gVkContext->GetDevice(),
                                                                        gVkContext->GetAllocator(),
                                                                        *(gCommandPoolManager.get()),
                                                                        name);
@@ -798,8 +768,9 @@ void UpdateARPlanes() {
         }
         auto planeRenderable = gArPlanes[planeid];
         //TODO: update the mutable mesh
-        auto mutableMesh = reinterpret_cast<graphics::MutableMesh*>(planeRenderable->GetMesh());
-        mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
+        auto mutableMesh = reinterpret_cast<graphics::MutableMesh *>(planeRenderable->GetMesh());
+        mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount,
+                                meshData->indices.data(), meshData->indexCount);
         //TODO: update the model transform of the renderable
         planeRenderable->GetTransform().SetFromMatrixPtr(modelMat);
         auto msg = Concatenate("[arplanes] updated plane ", planeid);
@@ -810,13 +781,14 @@ void UpdateARPlanes() {
     });
 }
 
-void DrawOffscreenRenderPass(VkCommandBuffer cmd, const uint32_t frameIndex){
+void DrawOffscreenRenderPass(VkCommandBuffer cmd, const uint32_t frameIndex) {
     //begin the offscreen render pass
     gOffscreenRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     gOffscreenRenderPass->AdvanceFrame();
-    gOffscreenRenderPass->Begin(cmd, gOffscreenRenderPass->GetFramebuffer(), gOffscreenRenderPass->GetExtent());
+    gOffscreenRenderPass->Begin(cmd, gOffscreenRenderPass->GetFramebuffer(),
+                                gOffscreenRenderPass->GetExtent());
     // Gather AR light estimation for Phong shading
-    const auto& lightEst = gArSessionManager->getLightEstimate();
+    const auto &lightEst = gArSessionManager->getLightEstimate();
     glm::vec4 lightDir(0.0f, -1.0f, -0.5f, 0.0f);
     float intensity = lightEst.valid ? lightEst.pixelIntensity : 1.0f;
     glm::vec4 lightColor(
@@ -827,17 +799,16 @@ void DrawOffscreenRenderPass(VkCommandBuffer cmd, const uint32_t frameIndex){
     glm::vec4 ambientColor(0.3f * intensity, 0.3f * intensity, 0.3f * intensity, 1.0f);
 
     // Draw AR planes into the offscreen render target
-    for (const auto& plane : gArPlanes)
-    {
+    for (const auto &plane: gArPlanes) {
         graphics::RDO rdo;
         rdo.Add(graphics::RDO::Keys::MODEL_MAT, plane.second->GetTransform().GetWorldMatrix());
 
-        std::array<float,16> arViewMatrix{};
+        std::array<float, 16> arViewMatrix{};
         gArSessionManager->getViewMatrix(arViewMatrix.data());
         glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
         rdo.Add(graphics::RDO::Keys::VIEW_MAT, viewMat);
 
-        std::array<float,16> arProjMatrix{};
+        std::array<float, 16> arProjMatrix{};
         gArSessionManager->getProjectionMatrix(0.01f, 100.f, arProjMatrix.data());
         glm::mat4 projMat = glm::make_mat4(arProjMatrix.data());
         rdo.Add(graphics::RDO::Keys::PROJ_MAT, projMat);
@@ -858,12 +829,12 @@ void DrawOffscreenRenderPass(VkCommandBuffer cmd, const uint32_t frameIndex){
         // Identity model matrix — mesh is already in world coordinates
         rdo.Add(graphics::RDO::Keys::MODEL_MAT, glm::mat4(1.0f));
 
-        std::array<float,16> arViewMatrix{};
+        std::array<float, 16> arViewMatrix{};
         gArSessionManager->getViewMatrix(arViewMatrix.data());
         glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
         rdo.Add(graphics::RDO::Keys::VIEW_MAT, viewMat);
 
-        std::array<float,16> arProjMatrix{};
+        std::array<float, 16> arProjMatrix{};
         gArSessionManager->getProjectionMatrix(0.01f, 100.f, arProjMatrix.data());
         glm::mat4 projMat = glm::make_mat4(arProjMatrix.data());
         rdo.Add(graphics::RDO::Keys::PROJ_MAT, projMat);

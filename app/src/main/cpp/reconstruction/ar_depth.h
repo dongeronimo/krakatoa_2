@@ -7,6 +7,7 @@
 #include <vector>
 namespace ar{
     class ARSessionManager;
+    struct ArDepthIntrinsics;
 }
 namespace graphics {
     class ArDepthImage;
@@ -58,6 +59,8 @@ namespace reconstruction {
         const int32_t Width;
         const int32_t Height;
         const int32_t Stride;
+
+        const ar::ArDepthIntrinsics& GetInstrinsics()const;
     private:
         /**
         * Advances the ring buffer inside ArDepthImage and updates the image
@@ -66,7 +69,7 @@ namespace reconstruction {
         std::vector<uint16_t> depthData;
 
         std::unique_ptr<graphics::ArDepthImage> gArDepthImage;
-
+        std::unique_ptr<ar::ArDepthIntrinsics> arIntrinsics;
         static bool HasVulkanThings();
     };
 }

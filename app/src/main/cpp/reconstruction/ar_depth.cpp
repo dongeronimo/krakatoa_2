@@ -19,6 +19,8 @@ std::shared_ptr<ArDepth> reconstruction::ArDepth::GetDepth(ar::ARSessionManager&
                                                    arDepthWidth, arDepthHeight);
         int32_t depthStride = 0; std::vector<uint16_t> depthData{};
         gArSessionManager.getDepthImageData(depthImageHandle, depthData, depthStride);
+        ar::ArDepthIntrinsics arDepthIntrinsics{};
+        gArSessionManager.getCameraIntrinsics(arDepthIntrinsics);
         gArSessionManager.releaseDepthImage(depthImageHandle);//must release the image
         if(gArDepth == nullptr){
             gArDepth = std::make_shared<ArDepth>(arDepthWidth, arDepthHeight, depthStride);
@@ -26,6 +28,11 @@ std::shared_ptr<ArDepth> reconstruction::ArDepth::GetDepth(ar::ARSessionManager&
             gOnCreate(gArDepth.get());
         }
         gArDepth->depthData = depthData;
+        gArDepth->arIntrinsics->fx = arDepthIntrinsics.fx;
+        gArDepth->arIntrinsics->fy = arDepthIntrinsics.fy;
+        gArDepth->arIntrinsics->cx = arDepthIntrinsics.cx;
+        gArDepth->arIntrinsics->cy = arDepthIntrinsics.cy;
+
         assert(gArDepth->Width == arDepthWidth);
         return gArDepth;
     }
@@ -42,6 +49,7 @@ ArDepth::ArDepth(int32_t width, int32_t height, int32_t stride) :
 Width(width), Height(height), Stride(stride) {
     assert(HasVulkanThings());
     gArDepthImage = std::make_unique<graphics::ArDepthImage>(gDevice, gAllocator,"ArDepthImage");
+    arIntrinsics = std::make_unique<ar::ArDepthIntrinsics>();
 }
 void ArDepth::UpdateWithMostRecent() {
     assert(HasVulkanThings());
@@ -68,4 +76,8 @@ void ArDepth::Release() {
 
 bool ArDepth::HasVulkanThings() {
     return gDevice && gAllocator;
+}
+
+const ar::ArDepthIntrinsics &ArDepth::GetInstrinsics() const {
+    return *this->arIntrinsics.get();
 }
