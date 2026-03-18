@@ -139,6 +139,10 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         marching_cubes_tables.h
         gpu_mesh.cpp
         gpu_mesh.h
+        tsdf_volume.cpp
+        tsdf_volume.h
+        tsdf_fusion_op.cpp
+        tsdf_fusion_op.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore

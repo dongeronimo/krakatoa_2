@@ -3,7 +3,7 @@
 #include <cstring>
 #include "compute_pipeline.h"
 #include "gpu_mesh.h"
-#include "voxel_volume.h"
+#include "tsdf_volume.h"
 #include "marching_cubes_tables.h"
 #include "vk_debug.h"
 #include "android_log.h"
@@ -194,18 +194,18 @@ void MarchingCubesOp::Execute(VkCommandBuffer cmd, uint32_t frameIndex) {
 
     // Push constants
     PushConstant pc{};
-    pc.cutoff     = cutoff_;
     pc.scale      = scale_;
     pc.maxDistance = maxDistance_;
-    pc.volumeSize = VoxelVolume::VOLUME_SIZE;
+    pc.volumeSize = TsdfVolume::VOLUME_SIZE;
     pc.maxVertices = outputMesh->GetMaxVertices();
     pc.maxIndices  = outputMesh->GetMaxIndices();
+    pc.minWeight  = minWeight_;
     vkCmdPushConstants(cmd, pipelineLayout,
                        VK_SHADER_STAGE_COMPUTE_BIT, 0,
                        sizeof(PushConstant), &pc);
 
     // Dispatch: 3D grid, workgroup size 4x4x4, over (volumeSize-1)^3 cells
-    uint32_t cells = VoxelVolume::VOLUME_SIZE - 1;
+    uint32_t cells = TsdfVolume::VOLUME_SIZE - 1;
     pipeline->DispatchRaw(cmd,
                           (cells + 3) / 4,
                           (cells + 3) / 4,
@@ -239,16 +239,16 @@ void MarchingCubesOp::SetOutputMesh(GpuMesh* mesh) {
     outputMesh = mesh;
 }
 
-void MarchingCubesOp::SetCutoff(uint32_t cutoff) {
-    cutoff_ = cutoff;
-}
-
 void MarchingCubesOp::SetScale(float scale) {
     scale_ = scale;
 }
 
 void MarchingCubesOp::SetMaxDistance(float maxDist) {
     maxDistance_ = maxDist;
+}
+
+void MarchingCubesOp::SetMinWeight(float minWeight) {
+    minWeight_ = minWeight;
 }
 
 // ── Internal: create lookup table buffers ───────────────────────────────

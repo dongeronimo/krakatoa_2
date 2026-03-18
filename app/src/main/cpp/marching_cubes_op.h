@@ -8,22 +8,23 @@ namespace graphics {
     class GpuMesh;
 
     /**
-     * Compute operation: marching cubes mesh generation.
+     * Compute operation: marching cubes mesh generation from TSDF volume.
      *
-     * Reads a 3D voxel volume and generates triangle mesh geometry into
-     * a GpuMesh (vertex + index + counter buffers).
+     * Reads a 3D TSDF volume (R32_UINT, packed distance+weight) and generates
+     * triangle mesh geometry into a GpuMesh (vertex + index + counter buffers).
+     * Surface extraction follows zero-crossings of the signed distance field.
      *
      * Owns the marching cubes lookup table buffers (edge table, tri table).
      * Does not own the volume image or the GpuMesh — those are shared resources.
      *
      * Shader: marching_cubes.comp
-     *   binding 0: 3D volume storage image (r8ui)
+     *   binding 0: 3D TSDF volume storage image (r32ui)
      *   binding 1: edge table SSBO (256 ints)
      *   binding 2: tri table SSBO (256*16 ints)
      *   binding 3: vertex output SSBO
      *   binding 4: index output SSBO
      *   binding 5: atomic counter SSBO
-     *   push constants: cutoff, scale, maxDistance, volumeSize, maxVertices, maxIndices
+     *   push constants: scale, maxDistance, volumeSize, maxVertices, maxIndices, minWeight
      */
     class MarchingCubesOp : public ComputeOperation {
     public:
@@ -47,19 +48,19 @@ namespace graphics {
         void SetOutputMesh(GpuMesh* mesh);
 
         // ── Per-frame setters ───────────────────────────────────────────
-        void SetCutoff(uint32_t cutoff);
         void SetScale(float scale);
         void SetMaxDistance(float maxDist);
+        void SetMinWeight(float minWeight);
 
     private:
         // ── Push constant layout (must match shader) ────────────────────
         struct PushConstant {
-            uint32_t cutoff;
-            float    scale;       // same scale as voxelization (100.0 = 1cm)
+            float    scale;       // same scale as TSDF fusion (e.g. 200.0 = 0.5cm)
             float    maxDistance;  // max edge length in voxel units
             uint32_t volumeSize;
             uint32_t maxVertices;
             uint32_t maxIndices;
+            float    minWeight;   // minimum TSDF weight to consider a voxel valid
         };
 
         // ── Wiring ─────────────────────────────────────────────────────
@@ -67,9 +68,9 @@ namespace graphics {
         GpuMesh* outputMesh = nullptr;  // non-owning
 
         // ── Per-frame params ────────────────────────────────────────────
-        uint32_t cutoff_ = 127;
-        float scale_ = 100.0f;
+        float scale_ = 200.0f;
         float maxDistance_ = 2.0f;
+        float minWeight_ = 2.0f;
 
         // ── Owned lookup table buffers ──────────────────────────────────
         VkBuffer      edgeTableBuffer     = VK_NULL_HANDLE;
