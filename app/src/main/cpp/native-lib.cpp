@@ -33,14 +33,12 @@
 #include "image_load.h"
 #include <glm/gtc/type_ptr.hpp>
 #include "ar_depth_image.h"
-#include "compute_pipeline.h"
-#include "depth_deprojection_config.h"
-#include "voxelization_config.h"
 #include "voxel_volume.h"
-#include "marching_cubes_config.h"
 #include "gpu_mesh.h"
-#include "CDO.h"
 #include "vk_debug.h"
+#include "depth_deprojection_op.h"
+#include "voxelization_op.h"
+#include "marching_cubes_op.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
@@ -64,12 +62,12 @@ std::unique_ptr<graphics::Renderable> cameraBgQuad = nullptr;
 std::unique_ptr<graphics::Renderable> composeQuad = nullptr;
 std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
 std::unique_ptr<graphics::ArDepthImage> gArDepthImage = nullptr;
-std::unique_ptr<graphics::ComputePipeline> gDeprojectionPipeline = nullptr;
-std::unique_ptr<graphics::DepthDeprojectionOutput> gDepthDeprojectionOutput = nullptr;
-std::unique_ptr<graphics::ComputePipeline> gVoxelizationPipeline = nullptr;
 std::unique_ptr<graphics::VoxelVolume> gVoxelVolume = nullptr;
-std::unique_ptr<graphics::ComputePipeline> gMarchingCubesPipeline = nullptr;
 std::unique_ptr<graphics::GpuMesh> gWorldMesh = nullptr;
+// Compute operations (own their pipelines, descriptor layouts, and GPU resources)
+std::unique_ptr<graphics::DepthDeprojectionOp> gDeprojectionOp = nullptr;
+std::unique_ptr<graphics::VoxelizationOp>      gVoxelizationOp = nullptr;
+std::unique_ptr<graphics::MarchingCubesOp>     gMarchingCubesOp = nullptr;
 std::unique_ptr<graphics::Texture2D> gMeshTexture = nullptr;
 std::unique_ptr<graphics::Pipeline> gWorldMeshPipeline = nullptr;
 std::unique_ptr<graphics::Renderable> gWorldMeshRenderable = nullptr;
@@ -154,21 +152,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .AddDescriptorSetLayout(composeDescriptorSetLayout)
             .Build();
     pipelineLayouts.insert({"compose", composePipelineLayout});
-    // Depth deprojection compute pipeline.
-    auto deprojectDescriptorSetLayout = graphics::DepthDeprojectionDescriptorSetLayout(gVkContext->GetDevice());
-    descriptorSetLayouts.insert({"compute_depth_deprojection", deprojectDescriptorSetLayout});
-    auto deprojectPipelineLayout = graphics::DepthDeprojectionPipelineLayout(gVkContext->GetDevice(), deprojectDescriptorSetLayout);
-    pipelineLayouts.insert({"compute_depth_deprojection", deprojectPipelineLayout});
-    // Voxelization compute pipeline.
-    auto voxelDescriptorSetLayout = graphics::VoxelizationDescriptorSetLayout(gVkContext->GetDevice());
-    descriptorSetLayouts.insert({"compute_voxelization", voxelDescriptorSetLayout});
-    auto voxelPipelineLayout = graphics::VoxelizationPipelineLayout(gVkContext->GetDevice(), voxelDescriptorSetLayout);
-    pipelineLayouts.insert({"compute_voxelization", voxelPipelineLayout});
-    // Marching cubes compute pipeline.
-    auto mcDescriptorSetLayout = graphics::MarchingCubesDescriptorSetLayout(gVkContext->GetDevice());
-    descriptorSetLayouts.insert({"compute_marching_cubes", mcDescriptorSetLayout});
-    auto mcPipelineLayout = graphics::MarchingCubesPipelineLayout(gVkContext->GetDevice(), mcDescriptorSetLayout);
-    pipelineLayouts.insert({"compute_marching_cubes", mcPipelineLayout});
+    // Compute operations are created below, after VoxelVolume and GpuMesh.
+    // They own their own descriptor set layouts and pipeline layouts.
 
     ANativeWindow_release(window);
     //Creates the command pool manager
@@ -242,9 +227,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                                                              gVkContext->GetAllocator(),
                                                              "ArDepthImage");
 
-    // create the output object for deprojection - still need to create the actual buffers once i know the size of the depth buffer
-    gDepthDeprojectionOutput = std::make_unique<graphics::DepthDeprojectionOutput>();
-    // create the voxel volume (1024³ R8_UINT 3D texture, cleared to zero)
+    // create the voxel volume (256³ R8_UINT 3D texture, cleared to zero)
     gVoxelVolume = std::make_unique<graphics::VoxelVolume>(gVkContext->GetDevice(),
                                                             gVkContext->GetAllocator(),
                                                             *gCommandPoolManager,
@@ -277,6 +260,23 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     // Create a renderable for the world mesh (identity transform — mesh is already in world coords)
     gWorldMeshRenderable = std::make_unique<graphics::Renderable>("world_mesh");
     gWorldMeshRenderable->SetMesh(gWorldMesh.get());
+
+    // ── Create compute operations ───────────────────────────────────────
+    // Each operation owns its pipeline, descriptor layout, and GPU resources.
+    // They are initialized lazily in nativeOnDrawFrame once depth dimensions
+    // are known (deprojection needs image dimensions to allocate output buffers).
+    graphics::ComputeOperation::InitContext computeCtx{
+        gVkContext->GetDevice(), gVkContext->GetAllocator()
+    };
+    gDeprojectionOp  = std::make_unique<graphics::DepthDeprojectionOp>(computeCtx);
+    gVoxelizationOp  = std::make_unique<graphics::VoxelizationOp>(computeCtx);
+    gMarchingCubesOp = std::make_unique<graphics::MarchingCubesOp>(computeCtx);
+
+    // Wire up static connections (non-owning pointers to shared resources)
+    gVoxelizationOp->SetPositionSource(gDeprojectionOp.get());
+    gVoxelizationOp->SetVolumeImageView(gVoxelVolume->GetImageView());
+    gMarchingCubesOp->SetVolumeImageView(gVoxelVolume->GetImageView());
+    gMarchingCubesOp->SetOutputMesh(gWorldMesh.get());
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -306,7 +306,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
     gTransparentPhongPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
                                                                       gVkContext->GetDevice(),
                                                                       gVkContext->GetAllocator(),
-                                                                      graphics::TransparentPhongConfig(gGridTexture.get()),
+                                                                      graphics::TransparentPhongConfig(gGridTexture.get(),
+                                                                                                       gCommandPoolManager.get()),
                                                                       pipelineLayouts["transparent_phong"],
                                                                       descriptorSetLayouts["transparent_phong"]);
     // World mesh pipeline: separate transparent phong instance with mesh.png texture
@@ -314,7 +315,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
     gWorldMeshPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
                                                                gVkContext->GetDevice(),
                                                                gVkContext->GetAllocator(),
-                                                               graphics::TransparentPhongConfig(gMeshTexture.get()),
+                                                               graphics::TransparentPhongConfig(gMeshTexture.get(),
+                                                                                                gCommandPoolManager.get()),
                                                                pipelineLayouts["transparent_phong"],
                                                                descriptorSetLayouts["transparent_phong"]);
     gCameraBgPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
@@ -375,204 +377,97 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gCommandPoolManager->BeginFrame();
     VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
     const uint32_t frameIndex = gVkContext->GetFrameIndex();
-    // TODO refactor: move all this volume building shit to some kind of subsystem to clean up the main loop
     /////////////////////////////
-    // get the ar depth image handle in arcore
+    // ── Compute pipeline: depth → voxels → mesh ────────────────────────
+    // Each stage is a ComputeOperation that owns its pipeline, descriptors,
+    // and GPU resources. The orchestration here just feeds per-frame data
+    // and calls Execute() / InsertPostBarrier() in sequence.
+    /////////////////////////////
     ArImage* depthImageHandle = gArSessionManager->getDepthImage();
     // Skip the entire compute pipeline if ARCore doesn't have a depth frame yet.
-    // This happens during the first few frames before the Depth API is fully initialized.
     if (depthImageHandle != nullptr) {
-    // get the depth image dimensions
-    int32_t arDepthWidth = 0; int32_t arDepthHeight = 0;
-    gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
-    if(previousArDepthWidth == 0) {
-        assert(gDeprojectionPipeline == nullptr);
-        previousArDepthWidth = arDepthWidth;
-        //TODO deproject (done): Create the output ring buffer. Size = vec4 * arDepthWidth * arDepthHeight
-        assert(gDepthDeprojectionOutput);
-        assert(arDepthWidth > 0 && arDepthHeight > 0 && "Depth image has zero dimensions");
-        size_t sizeInBytes = arDepthHeight * arDepthWidth * sizeof(float) * 4;
-        for(int i=0; i<MAX_FRAMES_IN_FLIGHT; i++){
-            //TODO deproject (done): create the output buffer
-            VkBufferCreateInfo bufferInfo{};
-            bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-            bufferInfo.size = sizeInBytes;
-            bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;  // for compute read/write
-            VmaAllocationCreateInfo allocInfo{};
-            allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
-            VkBuffer buffer = VK_NULL_HANDLE;
-            VmaAllocation allocation = VK_NULL_HANDLE;
-            VkResult vmaResult = vmaCreateBuffer(gVkContext->GetAllocator(),
-                            &bufferInfo, &allocInfo,
-                            &buffer, &allocation, nullptr);
-            assert(vmaResult == VK_SUCCESS && "Failed to allocate deprojection output buffer");
-            //TODO deproject (done): put in the ring buffer
-            gDepthDeprojectionOutput->outputBuffer[i] = buffer;
-            gDepthDeprojectionOutput->outputBufferAllocation[i] = allocation;
-            gDepthDeprojectionOutput->outputBufferSize[i] = sizeInBytes;
-            //TODO deproject (done): advance the ring buffers
-            gDepthDeprojectionOutput->outputBuffer.Next();
-            gDepthDeprojectionOutput->outputBufferAllocation.Next();
-            gDepthDeprojectionOutput->outputBufferSize.Next();
-            //TODO deproject (done): name the things
-            graphics::debug::SetBufferName(gVkContext->GetDevice(),
-                                           gDepthDeprojectionOutput->outputBuffer[i],
-                                           Concatenate("DepthDeprojectOutput ", i));
+        // Get depth image dimensions
+        int32_t arDepthWidth = 0, arDepthHeight = 0;
+        gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
+
+        // Lazy initialization: once we know depth dimensions, set them and
+        // initialize all three operations (they create their Vulkan pipelines
+        // and allocate GPU resources).
+        if (!gDeprojectionOp->IsInitialized()) {
+            assert(arDepthWidth > 0 && arDepthHeight > 0 && "Depth image has zero dimensions");
+            previousArDepthWidth = arDepthWidth;
+            gDeprojectionOp->SetDimensions(
+                static_cast<uint32_t>(arDepthWidth),
+                static_cast<uint32_t>(arDepthHeight));
+            gDeprojectionOp->Initialize();
+            gVoxelizationOp->Initialize();
+            gMarchingCubesOp->Initialize();
+        } else {
+            // Can't deal with changing depth buffer size — assert it's stable
+            assert(previousArDepthWidth == arDepthWidth);
         }
-    }
-    else {
-        assert(previousArDepthWidth ==
-               arDepthWidth);// I can't deal with changing depth buffer size right now, it breaks the output of the deproject compute shader
-    }
-    /**
-    * Aqui eu tenho:
-    * - as intrinsicas
-    * - os depth buffers
-    * Falta criar:
-    * - os output buffer
-    * O melhor lugar pra instanciar a pipeline é aqui. Ela tem que ser criada lazily.
-    * */
-    // create the deprojection compute shader pipeline, lazily, because thats the moment i have enough data to do so
-    if(gDeprojectionPipeline == nullptr) {
-        graphics::ComputePipelineConfig deprojectionConfig = graphics::DepthDeprojectConfig(
-                gVkContext->GetAllocator());
-        gDeprojectionPipeline = std::make_unique<graphics::ComputePipeline>(gVkContext->GetDevice(),
-                                                                            gVkContext->GetAllocator(),
-                                                                            deprojectionConfig,
-                                                                            pipelineLayouts["compute_depth_deprojection"],
-                                                                            descriptorSetLayouts["compute_depth_deprojection"]);
-    }
-    // get the image data
-    int32_t depthStride = 0; std::vector<uint16_t> depthData{};
-    gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
-    gArSessionManager->releaseDepthImage(depthImageHandle);//must release the image
-    // TODO deproject (done): Advance ar depth ring buffers
-    gArDepthImage->Advance();
-    // TODO deproject (done): Create or update the current ar depth image in vulkan
-    gArDepthImage->UpdateImage(depthData, {(uint32_t)arDepthWidth, (uint32_t)arDepthHeight});
-    // Advance the output ring buffers for deprojection
-    gDepthDeprojectionOutput->outputBuffer.Next();
-    gDepthDeprojectionOutput->outputBufferAllocation.Next();
-    gDepthDeprojectionOutput->outputBufferSize.Next();
-    // Get the intrinsics
-    ar::ArDepthIntrinsics arDepthIntrinsics{};
-    gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
-    // Get the view inverse matrix for camera→world transform
-    std::array<float,16> arViewMatrix{};
-    gArSessionManager->getViewMatrix(arViewMatrix.data());
-    glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
-    glm::mat4 viewInvMat = glm::inverse(viewMat);
-    std::array<float,16> viewInvArray{};
-    memcpy(viewInvArray.data(), glm::value_ptr(viewInvMat), sizeof(float) * 16);
-    // Skip dispatch if the depth buffer hasn't been uploaded yet (first frame
-    // after Advance — the ring buffer slot is still VK_NULL_HANDLE until the
-    // next Advance propagates the pending upload).
-    VkBuffer currentDepthBuffer = gArDepthImage->GetCurrentBuffer();
-    if (currentDepthBuffer != VK_NULL_HANDLE) {
-    // Build the CDO with all data the dispatch callback needs
-    graphics::CDO deprojectCDO;
-    // Scale camera intrinsics to depth image resolution.
-    // ARCore's ArCamera_getImageIntrinsics returns values for the full camera
-    // image, but the depth image is typically much smaller (e.g. 160x120 vs
-    // 1920x1080). Intrinsics scale linearly with resolution.
-    float scaleX = static_cast<float>(arDepthWidth)  / static_cast<float>(arDepthIntrinsics.w);
-    float scaleY = static_cast<float>(arDepthHeight) / static_cast<float>(arDepthIntrinsics.h);
-    deprojectCDO.Add(graphics::CDO::Keys::fx, arDepthIntrinsics.fx * scaleX);
-    deprojectCDO.Add(graphics::CDO::Keys::fy, arDepthIntrinsics.fy * scaleY);
-    deprojectCDO.Add(graphics::CDO::Keys::cx, arDepthIntrinsics.cx * scaleX);
-    deprojectCDO.Add(graphics::CDO::Keys::cy, arDepthIntrinsics.cy * scaleY);
-    deprojectCDO.Add(graphics::CDO::Keys::width, static_cast<int32_t>(arDepthWidth));
-    deprojectCDO.Add(graphics::CDO::Keys::height, static_cast<int32_t>(arDepthHeight));
-    deprojectCDO.Add(graphics::CDO::Keys::uint16_buffer, currentDepthBuffer);
-    deprojectCDO.Add(graphics::CDO::Keys::vec4_buffer, gDepthDeprojectionOutput->outputBuffer.Current());
-    deprojectCDO.Add(graphics::CDO::Keys::view_inverse, viewInvArray);
-    // Dispatch the deprojection compute shader
-    gDeprojectionPipeline->Dispatch(cmd, frameIndex, deprojectCDO);
-    // Memory barrier: ensure compute shader writes to output SSBO are visible
-    // before any subsequent reads (next compute pass or vertex shader).
-    VkMemoryBarrier computeBarrier{};
-    computeBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    computeBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    computeBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-                         0,
-                         1, &computeBarrier,
-                         0, nullptr,
-                         0, nullptr);
-    } // currentDepthBuffer != VK_NULL_HANDLE
-    // Lazily create the voxelization compute pipeline
-    if (gVoxelizationPipeline == nullptr) {
-        graphics::ComputePipelineConfig voxelConfig = graphics::VoxelizationConfig();
-        gVoxelizationPipeline = std::make_unique<graphics::ComputePipeline>(
-                gVkContext->GetDevice(),
-                gVkContext->GetAllocator(),
-                voxelConfig,
-                pipelineLayouts["compute_voxelization"],
-                descriptorSetLayouts["compute_voxelization"]);
-    }
-    // Voxelization: accumulate deprojected positions into the 3D volume
-    graphics::CDO voxelCDO;
-    voxelCDO.Add(graphics::CDO::Keys::vec4_buffer, gDepthDeprojectionOutput->outputBuffer.Current());
-    voxelCDO.Add(graphics::CDO::Keys::volume_image_view, gVoxelVolume->GetImageView());
-    uint32_t positionCount = static_cast<uint32_t>(arDepthWidth) * static_cast<uint32_t>(arDepthHeight);
-    voxelCDO.Add(graphics::CDO::Keys::position_count, positionCount);
-    voxelCDO.Add(graphics::CDO::Keys::voxel_scale, 100.0f); // 1 voxel = 1 cm
-    voxelCDO.Add(graphics::CDO::Keys::mc_volume_size, graphics::VoxelVolume::VOLUME_SIZE);
-    gVoxelizationPipeline->Dispatch(cmd, frameIndex, voxelCDO);
-    // Memory barrier: voxelization writes to the 3D image must complete before marching cubes reads it
-    VkMemoryBarrier voxelBarrier{};
-    voxelBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    voxelBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    voxelBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         0,
-                         1, &voxelBarrier,
-                         0, nullptr,
-                         0, nullptr);
-    // Lazily create the marching cubes compute pipeline
-    if (gMarchingCubesPipeline == nullptr) {
-        graphics::ComputePipelineConfig mcConfig = graphics::MarchingCubesConfig(
-                gVkContext->GetAllocator());
-        gMarchingCubesPipeline = std::make_unique<graphics::ComputePipeline>(
-                gVkContext->GetDevice(),
-                gVkContext->GetAllocator(),
-                mcConfig,
-                pipelineLayouts["compute_marching_cubes"],
-                descriptorSetLayouts["compute_marching_cubes"]);
-    }
-    // Reset mesh counters before dispatch
-    gWorldMesh->ResetCounters();
-    // Marching cubes: generate mesh from voxel volume
-    graphics::CDO mcCDO;
-    mcCDO.Add(graphics::CDO::Keys::volume_image_view, gVoxelVolume->GetImageView());
-    mcCDO.Add(graphics::CDO::Keys::mc_vertex_buffer, gWorldMesh->GetVertexStorageBuffer());
-    mcCDO.Add(graphics::CDO::Keys::mc_index_buffer, gWorldMesh->GetIndexStorageBuffer());
-    mcCDO.Add(graphics::CDO::Keys::mc_counter_buffer, gWorldMesh->GetCounterBuffer());
-    mcCDO.Add(graphics::CDO::Keys::mc_cutoff, static_cast<uint32_t>(127));
-    mcCDO.Add(graphics::CDO::Keys::voxel_scale, 100.0f);
-    mcCDO.Add(graphics::CDO::Keys::mc_max_distance, 2.0f);
-    mcCDO.Add(graphics::CDO::Keys::mc_max_vertices, MC_MAX_VERTICES);
-    mcCDO.Add(graphics::CDO::Keys::mc_max_indices, MC_MAX_INDICES);
-    gMarchingCubesPipeline->Dispatch(cmd, frameIndex, mcCDO);
-    // Memory barrier: marching cubes writes to vertex/index buffers must complete
-    // before the graphics pipeline reads them for rendering
-    VkMemoryBarrier mcBarrier{};
-    mcBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    mcBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    mcBarrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
-    vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0,
-                         1, &mcBarrier,
-                         0, nullptr,
-                         0, nullptr);
-    // Prepare indirect draw: copy GPU-written index count into the indirect draw buffer
-    gWorldMesh->PrepareIndirectDraw(cmd);
+
+        // Get depth data from ARCore and upload to Vulkan SSBO
+        int32_t depthStride = 0;
+        std::vector<uint16_t> depthData{};
+        gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
+        gArSessionManager->releaseDepthImage(depthImageHandle);
+
+        gArDepthImage->Advance();
+        gArDepthImage->UpdateImage(depthData,
+            {static_cast<uint32_t>(arDepthWidth), static_cast<uint32_t>(arDepthHeight)});
+
+        // Get camera intrinsics (scaled to depth image resolution)
+        ar::ArDepthIntrinsics arDepthIntrinsics{};
+        gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
+        float scaleX = static_cast<float>(arDepthWidth)  / static_cast<float>(arDepthIntrinsics.w);
+        float scaleY = static_cast<float>(arDepthHeight) / static_cast<float>(arDepthIntrinsics.h);
+
+        // Get view-inverse matrix (camera → world)
+        std::array<float,16> arViewMatrix{};
+        gArSessionManager->getViewMatrix(arViewMatrix.data());
+        glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
+        glm::mat4 viewInvMat = glm::inverse(viewMat);
+        std::array<float,16> viewInvArray{};
+        memcpy(viewInvArray.data(), glm::value_ptr(viewInvMat), sizeof(float) * 16);
+
+        // Skip dispatch if depth buffer hasn't been uploaded yet
+        VkBuffer currentDepthBuffer = gArDepthImage->GetCurrentBuffer();
+        if (currentDepthBuffer != VK_NULL_HANDLE) {
+            // ── Stage 1: Depth deprojection ─────────────────────────────
+            gDeprojectionOp->SetDepthBuffer(currentDepthBuffer);
+            gDeprojectionOp->SetIntrinsics(
+                arDepthIntrinsics.fx * scaleX,
+                arDepthIntrinsics.fy * scaleY,
+                arDepthIntrinsics.cx * scaleX,
+                arDepthIntrinsics.cy * scaleY);
+            gDeprojectionOp->SetViewInverse(viewInvArray);
+            gDeprojectionOp->SetDimensions(
+                static_cast<uint32_t>(arDepthWidth),
+                static_cast<uint32_t>(arDepthHeight));
+            gDeprojectionOp->Execute(cmd, frameIndex);
+            gDeprojectionOp->InsertPostBarrier(cmd);
+
+            // ── Stage 2: Voxelization ───────────────────────────────────
+            uint32_t positionCount = static_cast<uint32_t>(arDepthWidth)
+                                   * static_cast<uint32_t>(arDepthHeight);
+            gVoxelizationOp->SetPositionCount(positionCount);
+            gVoxelizationOp->SetScale(100.0f);   // 1 voxel = 1 cm
+            gVoxelizationOp->SetVolumeSize(graphics::VoxelVolume::VOLUME_SIZE);
+            gVoxelizationOp->Execute(cmd, frameIndex);
+            gVoxelizationOp->InsertPostBarrier(cmd);
+
+            // ── Stage 3: Marching cubes ─────────────────────────────────
+            gWorldMesh->ResetCounters();
+            gMarchingCubesOp->SetCutoff(127);
+            gMarchingCubesOp->SetScale(100.0f);
+            gMarchingCubesOp->SetMaxDistance(2.0f);
+            gMarchingCubesOp->Execute(cmd, frameIndex);
+            gMarchingCubesOp->InsertPostBarrier(cmd);
+
+            // Copy GPU-written counts into the indirect draw buffer
+            gWorldMesh->PrepareIndirectDraw(cmd);
+        }
     } // depthImageHandle != nullptr
 
     ////////////////////////////
@@ -648,12 +543,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     {
         vkDestroyPipelineLayout(gVkContext->GetDevice(), value, nullptr);
     }
-    gMarchingCubesPipeline = nullptr;
+    // Destroy compute operations before their shared resources (VoxelVolume, GpuMesh)
+    gMarchingCubesOp = nullptr;
+    gVoxelizationOp  = nullptr;
+    gDeprojectionOp  = nullptr;
     gWorldMesh = nullptr;
-    gVoxelizationPipeline = nullptr;
     gVoxelVolume = nullptr;
-    gDeprojectionPipeline = nullptr;
-    gDepthDeprojectionOutput = nullptr;
     gArDepthImage = nullptr;
     gWorldMeshRenderable = nullptr;
     gComposePipeline = nullptr;

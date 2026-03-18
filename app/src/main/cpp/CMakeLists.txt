@@ -126,19 +126,19 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         ar_depth_image.h
         compute_pipeline.cpp
         compute_pipeline.h
-        depth_deprojection_config.cpp
-        depth_deprojection_config.h
-        voxelization_config.cpp
-        voxelization_config.h
+        compute_operation.cpp
+        compute_operation.h
+        depth_deprojection_op.cpp
+        depth_deprojection_op.h
+        voxelization_op.cpp
+        voxelization_op.h
+        marching_cubes_op.cpp
+        marching_cubes_op.h
         voxel_volume.cpp
         voxel_volume.h
-        marching_cubes_config.cpp
-        marching_cubes_config.h
         marching_cubes_tables.h
         gpu_mesh.cpp
         gpu_mesh.h
-        CDO.h
-        cdo.cpp
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore

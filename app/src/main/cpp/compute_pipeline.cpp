@@ -5,6 +5,7 @@
 #include "android_log.h"
 #include "vk_debug.h"
 using namespace graphics;
+
 static std::vector<uint8_t> LoadComputeShader(const std::string& name) {
     auto path = Concatenate("shaders/", name, ".comp.spv");
     auto data = io::AssetLoader::loadFile(path);
@@ -14,6 +15,7 @@ static std::vector<uint8_t> LoadComputeShader(const std::string& name) {
     }
     return data;
 }
+
 VkShaderModule ComputePipeline::CreateShaderModule(const std::vector<uint8_t>& data) {
     VkShaderModuleCreateInfo info{};
     info.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -28,28 +30,30 @@ VkShaderModule ComputePipeline::CreateShaderModule(const std::vector<uint8_t>& d
     }
     return mod;
 }
+
 ComputePipeline::ComputePipeline(VkDevice device, VmaAllocator allocator,
-                                 const ComputePipelineConfig &config,
+                                 const ComputePipelineConfig& config,
                                  VkPipelineLayout pipelineLayout,
                                  VkDescriptorSetLayout descriptorSetLayout)
-                                 :device(device), allocator(allocator),
-                                 pipelineLayout(pipelineLayout),
-                                 descriptorSetLayout(descriptorSetLayout),
-                                 dispatchCallback(config.dispatchCallback)
+    : device(device), allocator(allocator),
+      pipelineLayout(pipelineLayout),
+      descriptorSetLayout(descriptorSetLayout)
 {
-    //sanity checks
+    // Sanity checks
     assert(!config.shaderName.empty());
     assert(pipelineLayout != VK_NULL_HANDLE);
     assert(descriptorSetLayout != VK_NULL_HANDLE);
-    //shader
+
+    // ── Shader + pipeline creation ──────────────────────────────────────
     auto src = LoadComputeShader(config.shaderName);
     VkShaderModule shaderModule = CreateShaderModule(src);
+
     VkPipelineShaderStageCreateInfo stageInfo{};
     stageInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stageInfo.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
     stageInfo.module = shaderModule;
     stageInfo.pName  = "main";
-    // ── pipeline ──
+
     VkComputePipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     pipelineInfo.stage  = stageInfo;
@@ -58,11 +62,11 @@ ComputePipeline::ComputePipeline(VkDevice device, VmaAllocator allocator,
     VkResult r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1,
                                           &pipelineInfo, nullptr, &pipeline);
     assert(r == VK_SUCCESS);
-    vkDestroyShaderModule(device, shaderModule, nullptr); // done after pipeline creation
+    vkDestroyShaderModule(device, shaderModule, nullptr);
     debug::SetPipelineName(device, pipeline,
                            Concatenate("ComputePipeline:", config.shaderName));
 
-    // ── descriptor pool ──
+    // ── Descriptor pool ─────────────────────────────────────────────────
     assert(!config.descriptorPoolSizes.empty());
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -73,9 +77,7 @@ ComputePipeline::ComputePipeline(VkDevice device, VmaAllocator allocator,
     r = vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool);
     assert(r == VK_SUCCESS);
 
-    // ── pre-allocate one descriptor set per frame in flight ──
-    // Unlike graphics (which is per-Renderable), compute sets are per-pipeline.
-    // The caller updates bindings each frame via vkUpdateDescriptorSets.
+    // ── Pre-allocate one descriptor set per frame in flight ─────────────
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -96,13 +98,6 @@ ComputePipeline::ComputePipeline(VkDevice device, VmaAllocator allocator,
 
 void ComputePipeline::Bind(VkCommandBuffer cmd) const {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-}
-
-void ComputePipeline::Dispatch(VkCommandBuffer cmd, uint32_t frameIndex, CDO& cdo) {
-    assert(dispatchCallback);
-    Bind(cmd);
-    dispatchCallback(cmd, *this, frameIndex, cdo);
-    descriptorSets.Next();
 }
 
 VkDescriptorSet ComputePipeline::AllocateDescriptorSet() {

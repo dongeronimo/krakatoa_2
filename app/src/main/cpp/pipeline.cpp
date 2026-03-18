@@ -12,6 +12,7 @@
 #include "concatenate.h"
 #include "ar_camera_image.h"
 #include "texture2d.h"
+#include "command_pool_manager.h"
 #include <glm/gtc/type_ptr.hpp>
 using namespace graphics;
 
@@ -235,9 +236,12 @@ struct TransparentPhongState {
 };
 
 /// Create a 1x1 RGBA8 white pixel image for use as placeholder texture.
+/// Transitions the image from PREINITIALIZED → GENERAL using a one-shot
+/// command buffer so it is ready for shader sampling immediately.
 static void createPlaceholderTexture(VkDevice device, VmaAllocator allocator,
+                                      CommandPoolManager& cmdManager,
                                       TransparentPhongState& state) {
-    // Image
+    // Image — LINEAR tiling so we can host-write the pixel directly
     VkImageCreateInfo imgInfo{};
     imgInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imgInfo.imageType     = VK_IMAGE_TYPE_2D;
@@ -264,6 +268,28 @@ static void createPlaceholderTexture(VkDevice device, VmaAllocator allocator,
     uint8_t pixel[4] = {255, 255, 255, 128};
     memcpy(mapInfo.pMappedData, pixel, 4);
     vmaFlushAllocation(allocator, state.placeholderAlloc, 0, 4);
+
+    // Transition PREINITIALIZED → GENERAL so the image is valid for sampling.
+    // Must happen via a command buffer (can't be done on the host side).
+    cmdManager.SubmitOneShot(CommandPoolManager::QueueType::Graphics,
+        [&](VkCommandBuffer cmd) {
+            VkImageMemoryBarrier barrier{};
+            barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.oldLayout           = VK_IMAGE_LAYOUT_PREINITIALIZED;
+            barrier.newLayout           = VK_IMAGE_LAYOUT_GENERAL;
+            barrier.srcAccessMask       = VK_ACCESS_HOST_WRITE_BIT;
+            barrier.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image               = state.placeholderImg;
+            barrier.subresourceRange    = {
+                VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
+            };
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_HOST_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &barrier);
+        });
 
     // Image view
     VkImageViewCreateInfo viewInfo{};
@@ -292,7 +318,8 @@ static void createPlaceholderTexture(VkDevice device, VmaAllocator allocator,
     assert(r == VK_SUCCESS);
 }
 
-PipelineConfig graphics::TransparentPhongConfig(Texture2D* texture) {
+PipelineConfig graphics::TransparentPhongConfig(Texture2D* texture,
+                                                 CommandPoolManager* cmdManager) {
     PipelineConfig config;
     config.vertexShader   = "transparent_phong.vert";
     config.fragmentShader = "transparent_phong.frag";
@@ -321,7 +348,7 @@ PipelineConfig graphics::TransparentPhongConfig(Texture2D* texture) {
 
     auto state = std::make_shared<TransparentPhongState>();
 
-    config.renderCallback = [state, texture](VkCommandBuffer cmd, RDO* rdo, Renderable* obj,
+    config.renderCallback = [state, texture, cmdManager](VkCommandBuffer cmd, RDO* rdo, Renderable* obj,
                                      Pipeline& pipeline, uint32_t frameIndex) {
         // -- First-time init: create sampler, optional placeholder, UBO buffers --
         std::shared_ptr<UniformBuffer> uniformBuffer = pipeline.GetUniformBuffer(obj->GetId());
@@ -329,7 +356,11 @@ PipelineConfig graphics::TransparentPhongConfig(Texture2D* texture) {
             state->device = pipeline.GetDevice();
             state->alloc  = pipeline.GetAllocator();
             if (!texture) {
-                createPlaceholderTexture(pipeline.GetDevice(), pipeline.GetAllocator(), *state);
+                // Placeholder is created here but the layout transition requires
+                // a one-shot command buffer (can't barrier inside a render pass).
+                assert(cmdManager && "CommandPoolManager required for placeholder texture transition");
+                createPlaceholderTexture(pipeline.GetDevice(), pipeline.GetAllocator(),
+                                         *cmdManager, *state);
             } else {
                 // Create sampler for the real texture
                 VkSamplerCreateInfo samplerInfo{};
