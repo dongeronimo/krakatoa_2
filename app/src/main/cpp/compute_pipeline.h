@@ -2,132 +2,75 @@
 #define KRAKATOA_COMPUTE_PIPELINE_H
 #include <vulkan/vulkan.h>
 #include <string>
-#include <functional>
 #include <vector>
 #include "ring_buffer.h"
 #include "vk_mem_alloc.h"
-#include "CDO.h"
 #define MAX_COMPUTE_DESCRIPTOR_SETS 4096
 namespace graphics {
-    class ComputePipeline;
     /**
-     * Describes a compute pipeine
-     * */
+     * Minimal config for creating a ComputePipeline.
+     * Just the shader name and descriptor pool sizing — all dispatch logic
+     * lives in the ComputeOperation subclasses, not in callbacks.
+     */
     struct ComputePipelineConfig {
         // e.g. "depth_deproject" → loads "shaders/depth_deproject.comp.spv"
         std::string shaderName;
         // Descriptor pool sizes — declare what bindings you need
         // e.g. { {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4} }
         std::vector<VkDescriptorPoolSize> descriptorPoolSizes;
-        // Called every dispatch — bind descriptors, push constants, call vkCmdDispatch
-        std::function<void(VkCommandBuffer cmd,
-                           ComputePipeline& pipeline,
-                           uint32_t frameIndex,
-                           CDO& cdo)> dispatchCallback;
     };
+
     /**
-     * I have to separate the compute pipelines from the graphic pipelines (Pipeline) because
-     * Pipeline assumes too much, like assuming that i'll have render pass.
-     * */
+     * Thin Vulkan wrapper around a compute pipeline object.
+     *
+     * Owns the VkPipeline, descriptor pool, and pre-allocated ring-buffered
+     * descriptor sets. Does NOT own the pipeline layout or descriptor set
+     * layout — those belong to the ComputeOperation that created this.
+     *
+     * ComputeOperation subclasses call Bind(), GetDescriptorSet(), and
+     * DispatchRaw() directly.
+     */
     class ComputePipeline {
     public:
         ComputePipeline(VkDevice device,
-                        VmaAllocator  allocator,
+                        VmaAllocator allocator,
                         const ComputePipelineConfig& config,
                         VkPipelineLayout pipelineLayout,
                         VkDescriptorSetLayout descriptorSetLayout);
         ~ComputePipeline();
+
         // Non-copyable
         ComputePipeline(const ComputePipeline&) = delete;
         ComputePipeline& operator=(const ComputePipeline&) = delete;
-        /**
-        * Binds the pipeline, that's before we draw.
-        * */
-        void Bind(VkCommandBuffer cmd) const;
-        void Dispatch(VkCommandBuffer cmd, uint32_t frameIndex, CDO& cdo);
-        VkDescriptorSet GetDescriptorSet(uint32_t frameIndex) const;
-        void DispatchRaw(VkCommandBuffer cmd,
-                                         uint32_t x, uint32_t y, uint32_t z) const;
-        VkDescriptorSet    AllocateDescriptorSet();
-        VkPipeline GetPipeline() const { return pipeline; }
-        VkDevice GetDevice() const {return device;}
-        VmaAllocator GetAllocator()const {return allocator;}
-        VkPipelineLayout GetPipelineLayout()const {return pipelineLayout;}
-        /**
-         * Store a buffer in the pipleine object, that'll own it
-         * */
-        void AddBuffer(const std::string& id, VkBuffer buffer, VmaAllocation allocation, void* mappedMemory = nullptr){
-            storedBuffers.insert({id, buffer});
-            storedAllocations.insert({id, allocation});
-            if(mappedMemory)
-                storedMaps.insert({id, mappedMemory});
-        }
-        /**
-         * Do i have this buffer?
-         * */
-        bool HasBuffer(const std::string& id) const {
-            return storedBuffers.count(id) > 0;
-        }
-        /**
-         * Get a stored buffer by id
-         * */
-        VkBuffer GetBuffer(const std::string& id) const {
-            return storedBuffers.at(id);
-        }
-        /**
-         * Get the mapped memory pointer for a stored buffer
-         * */
-        void* GetMappedMemory(const std::string& id) const {
-            return storedMaps.at(id);
-        }
-    private:
-        /**
-         * I own these buffers, they are stored at the compute pipeline to have a permanent and
-         * logically reasonable place for them to be. The same for the allocations and memory maps
-         * */
-        std::unordered_map<std::string, VkBuffer> storedBuffers;
-        std::unordered_map<std::string, VmaAllocation > storedAllocations;
-        std::unordered_map<std::string, void*> storedMaps;
-        /**
-         * Vk device, not owned by the device
-         * */
-        VkDevice device = VK_NULL_HANDLE;
-        /**
-         * Vma allocator. Not owned by this class.
-         * */
-        VmaAllocator allocator = VK_NULL_HANDLE;
-        /**
-         * Vulkan pipeline object, owned by the compute pipeline
-         * */
-        VkPipeline pipeline = VK_NULL_HANDLE;
-        /**
-         * Varies from pipeline to pipeline
-         * */
-        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
-        /**
-         * Varies from pipeline to pipeline
-         * */
-        VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
-        /**
-         * Each specific pipeline has it's own descriptor pool, created in the constructor,
-         * with the size specified at ComputePipelineConfig.
-         * */
-        VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
-        /**
-         * Compute behaves differently from graphics pipeline. While the graphics
-         * pipeline manages descriptor sets per-renderable that doesn't happen with
-         * compute, they are pre-allocated in the case of compute.
-         * */
-        utils::RingBuffer<VkDescriptorSet> descriptorSets;
-        /**
-         * The callback comes from the config.
-         * */
-        std::function<void(VkCommandBuffer, ComputePipeline&, uint32_t, CDO& cdo)> dispatchCallback;
-        /**
-         * Helper function to create the shader module for compute.
-         * */
-        VkShaderModule CreateShaderModule(const std::vector<uint8_t>& data);
 
+        /** Bind this compute pipeline to the command buffer. */
+        void Bind(VkCommandBuffer cmd) const;
+
+        /** Get the pre-allocated descriptor set for a given frame index. */
+        VkDescriptorSet GetDescriptorSet(uint32_t frameIndex) const;
+
+        /** Issue a vkCmdDispatch with the given workgroup counts. */
+        void DispatchRaw(VkCommandBuffer cmd,
+                         uint32_t x, uint32_t y, uint32_t z) const;
+
+        /** Allocate an additional descriptor set from the pool (for special use). */
+        VkDescriptorSet AllocateDescriptorSet();
+
+        VkPipeline GetPipeline() const { return pipeline; }
+        VkDevice GetDevice() const { return device; }
+        VmaAllocator GetAllocator() const { return allocator; }
+        VkPipelineLayout GetPipelineLayout() const { return pipelineLayout; }
+
+    private:
+        VkDevice device = VK_NULL_HANDLE;               // not owned
+        VmaAllocator allocator = VK_NULL_HANDLE;         // not owned
+        VkPipeline pipeline = VK_NULL_HANDLE;            // owned
+        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;   // not owned (ComputeOperation owns it)
+        VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE; // not owned
+        VkDescriptorPool descriptorPool = VK_NULL_HANDLE;   // owned
+        utils::RingBuffer<VkDescriptorSet> descriptorSets;  // pre-allocated per frame
+
+        VkShaderModule CreateShaderModule(const std::vector<uint8_t>& data);
     };
 }
 
