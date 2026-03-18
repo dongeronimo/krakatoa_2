@@ -306,7 +306,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
     gTransparentPhongPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
                                                                       gVkContext->GetDevice(),
                                                                       gVkContext->GetAllocator(),
-                                                                      graphics::TransparentPhongConfig(gGridTexture.get()),
+                                                                      graphics::TransparentPhongConfig(gGridTexture.get(),
+                                                                                                       gCommandPoolManager.get()),
                                                                       pipelineLayouts["transparent_phong"],
                                                                       descriptorSetLayouts["transparent_phong"]);
     // World mesh pipeline: separate transparent phong instance with mesh.png texture
@@ -314,7 +315,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
     gWorldMeshPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
                                                                gVkContext->GetDevice(),
                                                                gVkContext->GetAllocator(),
-                                                               graphics::TransparentPhongConfig(gMeshTexture.get()),
+                                                               graphics::TransparentPhongConfig(gMeshTexture.get(),
+                                                                                                gCommandPoolManager.get()),
                                                                pipelineLayouts["transparent_phong"],
                                                                descriptorSetLayouts["transparent_phong"]);
     gCameraBgPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),

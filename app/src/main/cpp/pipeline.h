@@ -16,6 +16,7 @@ namespace graphics {
     class ARCameraImage;
     class Texture2D;
     class OffscreenRenderPass;
+    class CommandPoolManager;
 
     /**
      * Configuration for the variable parts of a graphics pipeline.
@@ -115,9 +116,12 @@ namespace graphics {
      * Uses ARCore ambient intensity light estimation: the render callback
      * reads LIGHT_DIR, LIGHT_COLOR and AMBIENT_COLOR from the RDO.
      *
-     * @param texture  Texture to sample. If null, uses a 1x1 white placeholder.
+     * @param texture     Texture to sample. If null, uses a 1x1 white placeholder.
+     * @param cmdManager  Required when texture is null — used for the layout
+     *                    transition of the placeholder image via one-shot submit.
      */
-    PipelineConfig TransparentPhongConfig(Texture2D* texture);
+    PipelineConfig TransparentPhongConfig(Texture2D* texture,
+                                          CommandPoolManager* cmdManager = nullptr);
 
     /**
      * Compose: alpha-blends the offscreen render pass color attachment over
