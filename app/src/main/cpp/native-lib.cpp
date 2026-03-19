@@ -432,12 +432,62 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
 
             if (doFusion) {
                 // ── Stage 1: TSDF Fusion ────────────────────────────────
+                float fxScaled = arDepthIntrinsics.fx * scaleX;
+                float fyScaled = arDepthIntrinsics.fy * scaleY;
+                float cxScaled = arDepthIntrinsics.cx * scaleX;
+                float cyScaled = arDepthIntrinsics.cy * scaleY;
+
+                // ── Diagnostic logging (first 5 fusion frames) ──────────
+                static int fusionLogCount = 0;
+                if (fusionLogCount < 5) {
+                    fusionLogCount++;
+                    LOGI("=== TSDF FUSION DEBUG (frame %d) ===", fusionLogCount);
+                    LOGI("  Depth image: %dx%d  stride=%d", arDepthWidth, arDepthHeight, depthStride);
+                    LOGI("  Camera intrinsics (raw): fx=%.1f fy=%.1f cx=%.1f cy=%.1f  imgSize=%dx%d",
+                         arDepthIntrinsics.fx, arDepthIntrinsics.fy,
+                         arDepthIntrinsics.cx, arDepthIntrinsics.cy,
+                         arDepthIntrinsics.w, arDepthIntrinsics.h);
+                    LOGI("  Scale factors: scaleX=%.4f  scaleY=%.4f", scaleX, scaleY);
+                    LOGI("  Scaled intrinsics: fx=%.2f fy=%.2f cx=%.2f cy=%.2f",
+                         fxScaled, fyScaled, cxScaled, cyScaled);
+                    LOGI("  View matrix (col-major):");
+                    LOGI("    [%.4f %.4f %.4f %.4f]", arViewMatrix[0], arViewMatrix[4], arViewMatrix[8], arViewMatrix[12]);
+                    LOGI("    [%.4f %.4f %.4f %.4f]", arViewMatrix[1], arViewMatrix[5], arViewMatrix[9], arViewMatrix[13]);
+                    LOGI("    [%.4f %.4f %.4f %.4f]", arViewMatrix[2], arViewMatrix[6], arViewMatrix[10], arViewMatrix[14]);
+                    LOGI("    [%.4f %.4f %.4f %.4f]", arViewMatrix[3], arViewMatrix[7], arViewMatrix[11], arViewMatrix[15]);
+
+                    // Project world origin to depth image to verify alignment
+                    float camX = arViewMatrix[12], camY = arViewMatrix[13], camZ = arViewMatrix[14];
+                    LOGI("  World origin in camera space: (%.3f, %.3f, %.3f)", camX, camY, camZ);
+                    if (camZ < 0.0f) {
+                        float invZ = 1.0f / (-camZ);
+                        float u_proj = fxScaled * camX * invZ + cxScaled;
+                        float v_proj = fyScaled * (-camY) * invZ + cyScaled;
+                        LOGI("  World origin projects to pixel: (%.1f, %.1f)  [image is %dx%d]",
+                             u_proj, v_proj, arDepthWidth, arDepthHeight);
+                    }
+
+                    // Log a few depth values from the buffer
+                    if (!depthData.empty()) {
+                        int cx_i = arDepthWidth / 2, cy_i = arDepthHeight / 2;
+                        uint16_t dCenter = depthData[cy_i * arDepthWidth + cx_i];
+                        uint16_t d00 = depthData[0];
+                        uint16_t dLast = depthData[arDepthWidth * arDepthHeight - 1];
+                        // Count non-zero depth pixels
+                        int nonZero = 0;
+                        for (size_t i = 0; i < depthData.size() && i < static_cast<size_t>(arDepthWidth * arDepthHeight); i++) {
+                            if (depthData[i] > 0) nonZero++;
+                        }
+                        LOGI("  Depth samples: center=%u  [0,0]=%u  last=%u  (mm)", dCenter, d00, dLast);
+                        LOGI("  Non-zero depth pixels: %d / %d (%.1f%%)",
+                             nonZero, arDepthWidth * arDepthHeight,
+                             100.0f * nonZero / (arDepthWidth * arDepthHeight));
+                    }
+                    LOGI("=== END TSDF FUSION DEBUG ===");
+                }
+
                 gTsdfFusionOp->SetDepthBuffer(currentDepthBuffer);
-                gTsdfFusionOp->SetIntrinsics(
-                    arDepthIntrinsics.fx * scaleX,
-                    arDepthIntrinsics.fy * scaleY,
-                    arDepthIntrinsics.cx * scaleX,
-                    arDepthIntrinsics.cy * scaleY);
+                gTsdfFusionOp->SetIntrinsics(fxScaled, fyScaled, cxScaled, cyScaled);
                 gTsdfFusionOp->SetViewMatrix(arViewMatrix);
                 gTsdfFusionOp->SetDepthDimensions(
                     static_cast<uint32_t>(arDepthWidth),
