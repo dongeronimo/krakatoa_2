@@ -475,8 +475,25 @@ namespace ar {
         m_loader.ArImage_getPlaneData(m_session, image, 0, &rawData, &dataLength);
         m_loader.ArImage_getPlaneRowStride(m_session, image, 0, &stride);
 
-        const uint16_t* depthMm = reinterpret_cast<const uint16_t*>(rawData);
-        data.assign(depthMm, depthMm + dataLength / sizeof(uint16_t));
+        int32_t w = 0, h = 0;
+        m_loader.ArImage_getWidth(m_session, image, &w);
+        m_loader.ArImage_getHeight(m_session, image, &h);
+
+        // Row stride may include padding beyond width*sizeof(uint16_t).
+        // Repack tightly so the GPU shader can index as v*width+u.
+        int32_t stridePixels = stride / static_cast<int32_t>(sizeof(uint16_t));
+        if (stridePixels == w) {
+            // No padding — fast path
+            const uint16_t* depthMm = reinterpret_cast<const uint16_t*>(rawData);
+            data.assign(depthMm, depthMm + w * h);
+        } else {
+            // Strip row padding
+            data.resize(w * h);
+            for (int32_t row = 0; row < h; ++row) {
+                const uint16_t* srcRow = reinterpret_cast<const uint16_t*>(rawData + row * stride);
+                std::copy(srcRow, srcRow + w, data.data() + row * w);
+            }
+        }
     }
     void ARSessionManager::releaseDepthImage(ArImage* image) {
         m_loader.ArImage_release(image);
