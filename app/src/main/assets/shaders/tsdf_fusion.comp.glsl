@@ -97,13 +97,12 @@ void main() {
     if (voxelDepth > 3.0) return;
 
     // ── Step 3: Project to pixel coordinates ────────────────────────────
-    // ARCore camera space: X-right, Y-up, Z-backward (OpenGL convention).
-    // Image space: u-right, v-down. So u tracks X but v is flipped vs Y.
-    // Standard pinhole: u = fx·X/Z_fwd + cx, v = fy·(-Y)/Z_fwd + cy
-    //   where Z_fwd = -camPos.z
+    // The deprojection shader uses: y_cam = (v - cy) / fy * depth, z_cam = -depth
+    // So the inverse is: v = fy * y_cam / depth + cy = fy * y_cam / (-z_cam) + cy
+    // Both y_cam and v increase in the same direction (image convention).
     float invZ = 1.0 / (-camPos.z);
     float u_f = intrinsics.fx * camPos.x * invZ + intrinsics.cx;
-    float v_f = intrinsics.fy * (-camPos.y) * invZ + intrinsics.cy;
+    float v_f = intrinsics.fy * camPos.y * invZ + intrinsics.cy;
 
     // Bounds check (with 1px margin to avoid edge artifacts)
     if (u_f < 1.0 || u_f >= float(pc.depthWidth) - 1.0 ||
