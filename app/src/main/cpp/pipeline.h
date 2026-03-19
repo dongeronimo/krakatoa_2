@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include "ring_buffer.h"
 #include <vk_mem_alloc.h>
+#include <glm/vec3.hpp>
 
 namespace graphics {
     class Renderable;
@@ -122,6 +123,15 @@ namespace graphics {
      */
     PipelineConfig TransparentPhongConfig(Texture2D* texture,
                                           CommandPoolManager* cmdManager = nullptr);
+
+    /**
+     * Opaque phong: depth-tested solid rendering with a fixed material color.
+     * Same vertex format and lighting as TransparentPhong but no texture,
+     * no blending, depth writes enabled, backface culling on.
+     *
+     * @param color  Fixed material color (RGB).
+     */
+    PipelineConfig OpaquePhongConfig(glm::vec3 color);
 
     /**
      * Compose: alpha-blends the offscreen render pass color attachment over

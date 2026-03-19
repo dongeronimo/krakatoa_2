@@ -131,6 +131,16 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .AddDescriptorSetLayout(transPhongDescriptorSetLayout)
             .Build();
     pipelineLayouts.insert({"transparent_phong", transPhongPipelineLayout});
+    // Opaque Phong: UBO only (binding 0, vert+frag) — no texture sampler
+    auto opaquePhongDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
+            .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .Build();
+    descriptorSetLayouts.insert({"opaque_phong", opaquePhongDescriptorSetLayout});
+    auto opaquePhongPipelineLayout = graphics::PipelineLayoutBuilder(gVkContext->GetDevice())
+            .AddDescriptorSetLayout(opaquePhongDescriptorSetLayout)
+            .Build();
+    pipelineLayouts.insert({"opaque_phong", opaquePhongPipelineLayout});
     // Camera background: UBO (binding 0) + Y sampler (binding 1) + UV sampler (binding 2)
     auto cameraBgDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
             .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
@@ -307,15 +317,13 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                                                                        gCommandPoolManager.get()),
                                                                       pipelineLayouts["transparent_phong"],
                                                                       descriptorSetLayouts["transparent_phong"]);
-    // World mesh pipeline: separate transparent phong instance with mesh.png texture
-    // (or placeholder if mesh.png not yet provided)
+    // World mesh pipeline: opaque phong with fixed red color for TSDF mesh visualization
     gWorldMeshPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
                                                                gVkContext->GetDevice(),
                                                                gVkContext->GetAllocator(),
-                                                               graphics::TransparentPhongConfig(gMeshTexture.get(),
-                                                                                                gCommandPoolManager.get()),
-                                                               pipelineLayouts["transparent_phong"],
-                                                               descriptorSetLayouts["transparent_phong"]);
+                                                               graphics::OpaquePhongConfig(glm::vec3(1.0f, 0.0f, 0.0f)),
+                                                               pipelineLayouts["opaque_phong"],
+                                                               descriptorSetLayouts["opaque_phong"]);
     gCameraBgPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
                                                               gVkContext->GetDevice(),
                                                               gVkContext->GetAllocator(),
