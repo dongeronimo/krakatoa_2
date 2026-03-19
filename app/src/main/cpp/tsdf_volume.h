@@ -7,7 +7,7 @@
 namespace graphics {
     class CommandPoolManager;
     /**
-     * A 256³ R32_UINT 3D image used as a TSDF (Truncated Signed Distance Function) volume.
+     * A 128³ R32_UINT 3D image used as a TSDF (Truncated Signed Distance Function) volume.
      *
      * Each voxel is packed into a single uint32:
      *   bits [31:16] = TSDF distance as biased int16 (maps [-1,1] to [0,65535])
@@ -21,7 +21,7 @@ namespace graphics {
      */
     class TsdfVolume {
     public:
-        static constexpr uint32_t VOLUME_SIZE = 256;
+        static constexpr uint32_t VOLUME_SIZE = 128;
 
         /// Packed value for (tsdf=1.0, weight=0): biased distance = 65535, weight = 0
         static constexpr uint32_t INITIAL_PACKED_VALUE = 0xFFFF0000u;

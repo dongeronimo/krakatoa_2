@@ -428,10 +428,10 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         VkBuffer currentDepthBuffer = gArDepthImage->GetCurrentBuffer();
         if (currentDepthBuffer != VK_NULL_HANDLE) {
             gFrameCount++;
-            // Throttle: run TSDF fusion every 3 frames to hit 30fps.
-            // Marching cubes runs every 5 frames (it reuses the last mesh otherwise).
-            bool doFusion = (gFrameCount % 3 == 0);
-            bool doMesh   = (gFrameCount % 5 == 0);
+            // With 128³ volume (8x cheaper), run fusion every frame
+            // and rebuild the mesh every 3 frames for responsive feedback.
+            bool doFusion = true;
+            bool doMesh   = (gFrameCount % 3 == 0);
 
             if (doFusion) {
                 // ── Stage 1: TSDF Fusion ────────────────────────────────
@@ -499,10 +499,10 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                 gTsdfFusionOp->SetDepthDimensions(
                     static_cast<uint32_t>(arDepthWidth),
                     static_cast<uint32_t>(arDepthHeight));
-                gTsdfFusionOp->SetScale(200.0f);   // 1 voxel = 0.5 cm
+                gTsdfFusionOp->SetScale(100.0f);   // 1 voxel = 1 cm (128³ → 1.28m cube)
                 gTsdfFusionOp->SetVolumeSize(graphics::TsdfVolume::VOLUME_SIZE);
-                gTsdfFusionOp->SetTruncationDistance(0.06f); // 6 cm truncation (12 voxels)
-                gTsdfFusionOp->SetMaxWeight(200.0f);         // high cap for stable geometry
+                gTsdfFusionOp->SetTruncationDistance(0.04f); // 4 cm truncation (4 voxels at 1cm)
+                gTsdfFusionOp->SetMaxWeight(32.0f);          // low cap → new angles update faster
                 gTsdfFusionOp->Execute(cmd, frameIndex);
                 gTsdfFusionOp->InsertPostBarrier(cmd);
             }
@@ -510,9 +510,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
             if (doMesh) {
                 // ── Stage 2: Marching cubes ─────────────────────────────
                 gWorldMesh->ResetCounters();
-                gMarchingCubesOp->SetScale(200.0f);
+                gMarchingCubesOp->SetScale(100.0f);
                 gMarchingCubesOp->SetMaxDistance(2.0f);
-                gMarchingCubesOp->SetMinWeight(3.0f);  // require 3+ observations
+                gMarchingCubesOp->SetMinWeight(2.0f);  // require 2+ observations
                 gMarchingCubesOp->Execute(cmd, frameIndex);
                 gMarchingCubesOp->InsertPostBarrier(cmd);
                 gWorldMesh->PrepareIndirectDraw(cmd);
