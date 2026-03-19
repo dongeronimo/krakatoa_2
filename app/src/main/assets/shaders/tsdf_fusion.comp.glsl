@@ -33,16 +33,15 @@ layout(set = 0, binding = 2) buffer IntrinsicsBuffer {
 
 layout(push_constant) uniform PushConstants {
     mat4 viewMatrix;       // world → camera transform
-    float truncationDist;  // truncation distance in meters (e.g. 0.04)
+    float truncationDist;  // truncation distance in meters (e.g. 0.06)
     float scale;           // meters → voxel units (e.g. 200.0 for 0.5cm voxels)
     uint volumeSize;       // side length (e.g. 256)
     uint depthWidth;       // depth image width in pixels
     uint depthHeight;      // depth image height in pixels
-    float maxWeight;       // weight cap (e.g. 32.0)
-    float carveWeight;     // weight for free-space carving (e.g. 1.0)
+    float maxWeight;       // weight cap (e.g. 200.0)
 } pc;
 
-layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
 
 // ── Packing helpers ─────────────────────────────────────────────────────
 
@@ -94,6 +93,9 @@ void main() {
 
     float voxelDepth = -camPos.z; // positive distance along camera axis
 
+    // Early exit: skip voxels too far from the camera (depth sensor range ~5m)
+    if (voxelDepth > 3.0) return;
+
     // ── Step 3: Project to pixel coordinates ────────────────────────────
     float invZ = 1.0 / (-camPos.z);
     float u_f = intrinsics.fx * camPos.x * invZ + intrinsics.cx;
@@ -121,33 +123,22 @@ void main() {
     // ── Step 6: Truncation and fusion ───────────────────────────────────
     float truncDist = pc.truncationDist;
 
+    // Skip voxels outside the truncation band entirely.
+    // No free-space carving — this is a static-scene accumulator.
+    // Voxels in front of the surface (sdf > truncDist) are left unchanged.
+    // Voxels behind the surface (sdf < -truncDist) are also left unchanged.
+    if (abs(sdf) > truncDist) return;
+
+    // Within truncation band: fuse the normalized SDF
+    float tsdfNew = clamp(sdf / truncDist, -1.0, 1.0);
+
     // Read current TSDF value
     uint packedCurrent = imageLoad(tsdfVolume, ivec3(voxelCoord)).r;
     float tsdfOld, weightOld;
     unpackTsdf(packedCurrent, tsdfOld, weightOld);
 
-    if (sdf > truncDist) {
-        // Voxel is well in front of the surface → free-space carving.
-        // Push existing value toward +1 and reduce weight, allowing
-        // removed objects to be carved out over time.
-        if (weightOld > 0.0) {
-            float newTsdf = (tsdfOld * weightOld + 1.0 * pc.carveWeight) / (weightOld + pc.carveWeight);
-            float newWeight = min(weightOld + pc.carveWeight, pc.maxWeight);
-            imageStore(tsdfVolume, ivec3(voxelCoord), uvec4(packTsdf(newTsdf, newWeight), 0, 0, 0));
-        }
-        return;
-    }
-
-    if (sdf < -truncDist) {
-        // Voxel is well behind the surface → no information, skip.
-        return;
-    }
-
-    // Within truncation band: fuse the normalized SDF
-    float tsdfNew = clamp(sdf / truncDist, -1.0, 1.0);
-    float wNew = 1.0;
-
     // Weighted running average
+    float wNew = 1.0;
     float tsdfFused = (tsdfOld * weightOld + tsdfNew * wNew) / (weightOld + wNew);
     float weightFused = min(weightOld + wNew, pc.maxWeight);
 

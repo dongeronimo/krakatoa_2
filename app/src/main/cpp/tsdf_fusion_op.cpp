@@ -148,15 +148,14 @@ void TsdfFusionOp::Execute(VkCommandBuffer cmd, uint32_t frameIndex) {
     pc.depthWidth     = depthWidth_;
     pc.depthHeight    = depthHeight_;
     pc.maxWeight      = maxWeight_;
-    pc.carveWeight    = carveWeight_;
     vkCmdPushConstants(cmd, pipelineLayout,
                        VK_SHADER_STAGE_COMPUTE_BIT, 0,
                        sizeof(PushConstant), &pc);
 
-    // Dispatch: 3D grid, workgroup size 4x4x4, over volumeSize³ voxels
+    // Dispatch: 3D grid, workgroup size 8x8x4 = 256 threads, over volumeSize³ voxels
     pipeline->DispatchRaw(cmd,
-                          (volumeSize_ + 3) / 4,
-                          (volumeSize_ + 3) / 4,
+                          (volumeSize_ + 7) / 8,
+                          (volumeSize_ + 7) / 8,
                           (volumeSize_ + 3) / 4);
 }
 
@@ -196,10 +195,6 @@ void TsdfFusionOp::SetTruncationDistance(float dist) {
 
 void TsdfFusionOp::SetMaxWeight(float maxWeight) {
     maxWeight_ = maxWeight;
-}
-
-void TsdfFusionOp::SetCarveWeight(float carveWeight) {
-    carveWeight_ = carveWeight;
 }
 
 // ── Internal: create intrinsics ring buffers ────────────────────────────

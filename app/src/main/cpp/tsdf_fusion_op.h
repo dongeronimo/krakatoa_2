@@ -15,17 +15,15 @@ namespace graphics {
      *   2. Computes signed distance from the surface
      *   3. Fuses into the running weighted average stored in the volume
      *
-     * Replaces VoxelizationOp in the reconstruction pipeline. Unlike simple
-     * occupancy counting, TSDF produces proper signed distance values that
-     * enable accurate zero-crossing mesh extraction and supports free-space
-     * carving for dynamic scenes.
+     * Static-scene accumulator — no free-space carving. Geometry persists
+     * across frames with high weight cap for stable reconstruction.
      *
      * Shader: tsdf_fusion.comp
      *   binding 0: TSDF volume (r32ui storage image, packed distance+weight)
      *   binding 1: depth buffer SSBO (uint16 packed)
      *   binding 2: camera intrinsics SSBO (fx, fy, cx, cy)
      *   push constants: viewMatrix (mat4), truncationDist, scale, volumeSize,
-     *                   depthWidth, depthHeight, maxWeight, carveWeight
+     *                   depthWidth, depthHeight, maxWeight
      */
     class TsdfFusionOp : public ComputeOperation {
     public:
@@ -61,14 +59,11 @@ namespace graphics {
         /** Volume side length. */
         void SetVolumeSize(uint32_t size);
 
-        /** Truncation distance in meters (e.g. 0.04 for 4cm). */
+        /** Truncation distance in meters (e.g. 0.06 for 6cm). */
         void SetTruncationDistance(float dist);
 
-        /** Maximum weight cap (e.g. 32). */
+        /** Maximum weight cap (e.g. 200). Higher = more persistent geometry. */
         void SetMaxWeight(float maxWeight);
-
-        /** Weight used for free-space carving (e.g. 1.0). */
-        void SetCarveWeight(float carveWeight);
 
     private:
         // ── Push constant layout (must match shader) ────────────────────
@@ -80,7 +75,6 @@ namespace graphics {
             uint32_t depthWidth;
             uint32_t depthHeight;
             float maxWeight;
-            float carveWeight;
         };
 
         // ── Intrinsics UBO layout (must match shader binding 2) ─────────
@@ -98,9 +92,8 @@ namespace graphics {
         uint32_t depthWidth_ = 0, depthHeight_ = 0;
         float scale_ = 200.0f;
         uint32_t volumeSize_ = 256;
-        float truncationDist_ = 0.04f;
-        float maxWeight_ = 32.0f;
-        float carveWeight_ = 1.0f;
+        float truncationDist_ = 0.06f;
+        float maxWeight_ = 200.0f;
 
         // ── Owned GPU resources ─────────────────────────────────────────
         // Intrinsics: ring-buffered host-visible SSBOs (one per frame in flight)
