@@ -407,9 +407,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
         gArSessionManager->releaseDepthImage(depthImageHandle);
 
-        gArDepthImage->Advance();
+        // UpdateImage BEFORE Advance so the GPU buffer gets THIS frame's
+        // depth data (not the previous frame's). The old order caused a
+        // 1-frame lag between depth and view matrix, producing drift.
         gArDepthImage->UpdateImage(depthData,
             {static_cast<uint32_t>(arDepthWidth), static_cast<uint32_t>(arDepthHeight)});
+        gArDepthImage->Advance();
 
         // Get camera intrinsics (scaled to depth image resolution)
         ar::ArDepthIntrinsics arDepthIntrinsics{};
@@ -437,11 +440,20 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                 float cxScaled = arDepthIntrinsics.cx * scaleX;
                 float cyScaled = arDepthIntrinsics.cy * scaleY;
 
-                // ── Diagnostic logging (first 5 fusion frames) ──────────
+                // ── Diagnostic logging (first 5 + first valid depth) ─────
                 static int fusionLogCount = 0;
-                if (fusionLogCount < 5) {
+                static bool loggedFirstValidDepth = false;
+                int nonZeroPixels = 0;
+                if (!depthData.empty()) {
+                    for (size_t i = 0; i < depthData.size() && i < static_cast<size_t>(arDepthWidth * arDepthHeight); i++) {
+                        if (depthData[i] > 0) nonZeroPixels++;
+                    }
+                }
+                bool shouldLog = (fusionLogCount < 5) || (!loggedFirstValidDepth && nonZeroPixels > 0);
+                if (shouldLog) {
                     fusionLogCount++;
-                    LOGI("=== TSDF FUSION DEBUG (frame %d) ===", fusionLogCount);
+                    if (nonZeroPixels > 0) loggedFirstValidDepth = true;
+                    LOGI("=== TSDF FUSION DEBUG (log #%d, valid=%s) ===", fusionLogCount, nonZeroPixels > 0 ? "YES" : "no");
                     LOGI("  Depth image: %dx%d  stride=%d", arDepthWidth, arDepthHeight, depthStride);
                     LOGI("  Camera intrinsics (raw): fx=%.1f fy=%.1f cx=%.1f cy=%.1f  imgSize=%dx%d",
                          arDepthIntrinsics.fx, arDepthIntrinsics.fy,
@@ -473,15 +485,10 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                         uint16_t dCenter = depthData[cy_i * arDepthWidth + cx_i];
                         uint16_t d00 = depthData[0];
                         uint16_t dLast = depthData[arDepthWidth * arDepthHeight - 1];
-                        // Count non-zero depth pixels
-                        int nonZero = 0;
-                        for (size_t i = 0; i < depthData.size() && i < static_cast<size_t>(arDepthWidth * arDepthHeight); i++) {
-                            if (depthData[i] > 0) nonZero++;
-                        }
                         LOGI("  Depth samples: center=%u  [0,0]=%u  last=%u  (mm)", dCenter, d00, dLast);
                         LOGI("  Non-zero depth pixels: %d / %d (%.1f%%)",
-                             nonZero, arDepthWidth * arDepthHeight,
-                             100.0f * nonZero / (arDepthWidth * arDepthHeight));
+                             nonZeroPixels, arDepthWidth * arDepthHeight,
+                             100.0f * nonZeroPixels / (arDepthWidth * arDepthHeight));
                     }
                     LOGI("=== END TSDF FUSION DEBUG ===");
                 }
