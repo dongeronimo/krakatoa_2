@@ -130,6 +130,19 @@ void GpuMesh::PrepareIndirectDraw(VkCommandBuffer cmd) {
     // instanceCount = 1 at byte offset 4
     vkCmdFillBuffer(cmd, indirectDrawBuffer, sizeof(uint32_t), sizeof(uint32_t), 1);
 
+    // Barrier: fill writes must complete before copy writes to the same region (WAW hazard)
+    VkMemoryBarrier fillBarrier{};
+    fillBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    fillBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    fillBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0,
+                         1, &fillBarrier,
+                         0, nullptr,
+                         0, nullptr);
+
     // Copy indexCount from counter buffer (offset 4) to indirect buffer (offset 0)
     VkBufferCopy region{};
     region.srcOffset = sizeof(uint32_t); // indexCount is at [1] in counter buffer

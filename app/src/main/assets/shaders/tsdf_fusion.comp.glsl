@@ -97,12 +97,13 @@ void main() {
     if (voxelDepth > 3.0) return;
 
     // ── Step 3: Project to pixel coordinates ────────────────────────────
-    // The deprojection shader uses: y_cam = (v - cy) / fy * depth, z_cam = -depth
-    // So the inverse is: v = fy * y_cam / depth + cy = fy * y_cam / (-z_cam) + cy
-    // Both y_cam and v increase in the same direction (image convention).
+    // The deprojection shader defines: y_cam = (v - cy) / fy * depth, z_cam = -depth
+    // where y_cam increases downward (same as image v).
+    // But camPos.y from the view matrix is ARCore convention (Y points UP).
+    // So we negate Y: v = fy * (-camPos.y) / (-camPos.z) + cy
     float invZ = 1.0 / (-camPos.z);
     float u_f = intrinsics.fx * camPos.x * invZ + intrinsics.cx;
-    float v_f = intrinsics.fy * camPos.y * invZ + intrinsics.cy;
+    float v_f = intrinsics.fy * (-camPos.y) * invZ + intrinsics.cy;
 
     // Bounds check (with 1px margin to avoid edge artifacts)
     if (u_f < 1.0 || u_f >= float(pc.depthWidth) - 1.0 ||
