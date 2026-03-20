@@ -33,6 +33,22 @@ FetchContent_Declare(
         GIT_SHALLOW TRUE
 )
 
+# Eigen - header-only math library (required by OpenChisel)
+FetchContent_Declare(
+        eigen
+        GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+        GIT_TAG 3.4.0
+        GIT_SHALLOW TRUE
+)
+
+# OpenChisel - chunked TSDF reconstruction
+FetchContent_Declare(
+        open_chisel
+        GIT_REPOSITORY https://github.com/personalrobotics/OpenChisel.git
+        GIT_TAG master
+        GIT_SHALLOW TRUE
+)
+
 # Configure Assimp - minimal build
 set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
@@ -46,7 +62,32 @@ set(ASSIMP_ANDROID_JNIIOSYSTEM OFF CACHE BOOL "" FORCE)
 set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
 
 message(STATUS "Fetching dependencies...")
-FetchContent_MakeAvailable(glm assimp json)
+FetchContent_MakeAvailable(glm assimp json eigen open_chisel)
+
+# Build OpenChisel core library (skip its catkin/ROS build system entirely)
+add_library(open_chisel STATIC
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/Chisel.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/Chunk.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/ChunkManager.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/ColorVoxel.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/DistVoxel.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/ProjectionIntegrator.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/camera/Intrinsics.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/camera/PinholeCamera.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/geometry/AABB.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/geometry/Frustum.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/geometry/Plane.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/geometry/Raycast.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/io/PLY.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/marching_cubes/MarchingCubes.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/mesh/Mesh.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/pointcloud/PointCloud.cpp
+)
+target_include_directories(open_chisel PUBLIC
+        ${open_chisel_SOURCE_DIR}/open_chisel/include
+)
+target_link_libraries(open_chisel PUBLIC Eigen3::Eigen)
+target_compile_options(open_chisel PRIVATE -O2 -DNDEBUG -Wno-error)
 
 # 16KB page size alignment for Android 15+
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
@@ -162,6 +203,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         nlohmann_json::nlohmann_json
         assimp::assimp
         glm::glm
+        open_chisel
         EGL
         GLESv3
 )
