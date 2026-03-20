@@ -194,6 +194,9 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         tsdf_volume.h
         tsdf_fusion_op.cpp
         tsdf_fusion_op.h
+        thread_event.h
+        chisel_manager.h
+        chisel_manager.cpp
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore

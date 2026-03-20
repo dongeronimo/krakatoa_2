@@ -39,6 +39,7 @@
 #include "marching_cubes_op.h"
 #include "tsdf_volume.h"
 #include "tsdf_fusion_op.h"
+#include "chisel_manager.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
@@ -63,10 +64,11 @@ std::unique_ptr<graphics::Renderable> composeQuad = nullptr;
 std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
 std::unique_ptr<graphics::ArDepthImage> gArDepthImage = nullptr;
 std::unique_ptr<graphics::TsdfVolume> gTsdfVolume = nullptr;
-std::unique_ptr<graphics::GpuMesh> gWorldMesh = nullptr;
+std::unique_ptr<graphics::MutableMesh> gWorldMesh = nullptr;
 // Compute operations (own their pipelines, descriptor layouts, and GPU resources)
 std::unique_ptr<graphics::TsdfFusionOp>        gTsdfFusionOp = nullptr;
 std::unique_ptr<graphics::MarchingCubesOp>     gMarchingCubesOp = nullptr;
+std::unique_ptr<reconstruction::ChiselManager> gChiselManager = nullptr;
 std::unique_ptr<graphics::Texture2D> gMeshTexture = nullptr;
 std::unique_ptr<graphics::Pipeline> gWorldMeshPipeline = nullptr;
 std::unique_ptr<graphics::Renderable> gWorldMeshRenderable = nullptr;
@@ -236,17 +238,19 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                                                              gVkContext->GetAllocator(),
                                                              "ArDepthImage");
 
-    // create the TSDF volume (256³ R32_UINT 3D texture, initialized to free space)
+    // Create CPU-uploaded mesh for OpenChisel output (replaces GpuMesh)
+    gWorldMesh = std::make_unique<graphics::MutableMesh>(gVkContext->GetDevice(),
+                                                          gVkContext->GetAllocator(),
+                                                          *gCommandPoolManager,
+                                                          "WorldMesh");
+    // OpenChisel-based reconstruction manager (worker thread handles integration)
+    gChiselManager = std::make_unique<reconstruction::ChiselManager>();
+
+    // ── Preserved compute infrastructure (not used for TSDF, kept for future use) ──
     gTsdfVolume = std::make_unique<graphics::TsdfVolume>(gVkContext->GetDevice(),
                                                           gVkContext->GetAllocator(),
                                                           *gCommandPoolManager,
                                                           "TsdfVolume");
-    // create the GPU mesh for marching cubes output
-    gWorldMesh = std::make_unique<graphics::GpuMesh>(gVkContext->GetDevice(),
-                                                      gVkContext->GetAllocator(),
-                                                      MC_MAX_VERTICES,
-                                                      MC_MAX_INDICES,
-                                                      "WorldMesh");
     // Load mesh texture for the world mesh (transparent phong shading).
     // Uses textures/mesh.png if available; nullptr triggers a placeholder in the pipeline.
     if (io::AssetLoader::exists("textures/mesh.png")) {
@@ -283,7 +287,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     // Wire up static connections (non-owning pointers to shared resources)
     gTsdfFusionOp->SetVolumeImageView(gTsdfVolume->GetImageView());
     gMarchingCubesOp->SetVolumeImageView(gTsdfVolume->GetImageView());
-    gMarchingCubesOp->SetOutputMesh(gWorldMesh.get());
+    // Note: gMarchingCubesOp output mesh not wired — world mesh now comes from OpenChisel
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -384,149 +388,61 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
     const uint32_t frameIndex = gVkContext->GetFrameIndex();
     /////////////////////////////
-    // ── Compute pipeline: depth → voxels → mesh ────────────────────────
-    // Each stage is a ComputeOperation that owns its pipeline, descriptors,
-    // and GPU resources. The orchestration here just feeds per-frame data
-    // and calls Execute() / InsertPostBarrier() in sequence.
+    // ── OpenChisel TSDF reconstruction ──────────────────────────────────
+    // Depth data is sent to the ChiselManager worker thread for integration.
+    // When new mesh data is available, it's uploaded to the MutableMesh.
     /////////////////////////////
+    // Advance the world mesh ring buffer for this frame
+    gWorldMesh->Advance();
+
     ArImage* depthImageHandle = gArSessionManager->getDepthImage();
-    // Skip the entire compute pipeline if ARCore doesn't have a depth frame yet.
     if (depthImageHandle != nullptr) {
-        // Get depth image dimensions
         int32_t arDepthWidth = 0, arDepthHeight = 0;
         gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
 
-        // Lazy initialization: once we know depth dimensions, initialize
-        // all compute operations (they create their Vulkan pipelines
-        // and allocate GPU resources).
-        if (!gTsdfFusionOp->IsInitialized()) {
+        // Lazy-init OpenChisel on first valid depth frame
+        if (!gChiselManager->IsInitialized()) {
             assert(arDepthWidth > 0 && arDepthHeight > 0 && "Depth image has zero dimensions");
-            previousArDepthWidth = arDepthWidth;
-            gTsdfFusionOp->Initialize();
-            gMarchingCubesOp->Initialize();
-        } else {
-            // Can't deal with changing depth buffer size — assert it's stable
-            assert(previousArDepthWidth == arDepthWidth);
+            gChiselManager->Initialize();  // 2cm voxels, 10cm truncation, auto thread count
         }
 
-        // Get depth data from ARCore and upload to Vulkan SSBO
+        // Get depth data from ARCore
         int32_t depthStride = 0;
         std::vector<uint16_t> depthData{};
         gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
         gArSessionManager->releaseDepthImage(depthImageHandle);
 
-        // UpdateImage BEFORE Advance so the GPU buffer gets THIS frame's
-        // depth data (not the previous frame's). The old order caused a
-        // 1-frame lag between depth and view matrix, producing drift.
-        gArDepthImage->UpdateImage(depthData,
-            {static_cast<uint32_t>(arDepthWidth), static_cast<uint32_t>(arDepthHeight)});
-        gArDepthImage->Advance();
-
-        // Get camera intrinsics (scaled to depth image resolution)
+        // Get camera intrinsics scaled to depth resolution
         ar::ArDepthIntrinsics arDepthIntrinsics{};
         gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
         float scaleX = static_cast<float>(arDepthWidth)  / static_cast<float>(arDepthIntrinsics.w);
         float scaleY = static_cast<float>(arDepthHeight) / static_cast<float>(arDepthIntrinsics.h);
 
         // Get view matrix (world → camera)
-        std::array<float,16> arViewMatrix{};
+        std::array<float, 16> arViewMatrix{};
         gArSessionManager->getViewMatrix(arViewMatrix.data());
 
-        // Skip dispatch if depth buffer hasn't been uploaded yet
-        VkBuffer currentDepthBuffer = gArDepthImage->GetCurrentBuffer();
-        if (currentDepthBuffer != VK_NULL_HANDLE) {
-            gFrameCount++;
-            // With 128³ volume (8x cheaper), run fusion every frame
-            // and rebuild the mesh every 3 frames for responsive feedback.
-            bool doFusion = true;
-            bool doMesh   = (gFrameCount % 3 == 0);
+        // Queue frame for async integration (non-blocking)
+        reconstruction::ChiselManager::FrameInput frameInput;
+        frameInput.depthData = std::move(depthData);
+        frameInput.width = arDepthWidth;
+        frameInput.height = arDepthHeight;
+        frameInput.fx = arDepthIntrinsics.fx * scaleX;
+        frameInput.fy = arDepthIntrinsics.fy * scaleY;
+        frameInput.cx = arDepthIntrinsics.cx * scaleX;
+        frameInput.cy = arDepthIntrinsics.cy * scaleY;
+        frameInput.viewMatrix = arViewMatrix;
+        gChiselManager->IntegrateFrame(frameInput);
+    }
 
-            if (doFusion) {
-                // ── Stage 1: TSDF Fusion ────────────────────────────────
-                float fxScaled = arDepthIntrinsics.fx * scaleX;
-                float fyScaled = arDepthIntrinsics.fy * scaleY;
-                float cxScaled = arDepthIntrinsics.cx * scaleX;
-                float cyScaled = arDepthIntrinsics.cy * scaleY;
-
-                // ── Diagnostic logging (first 5 + first valid depth) ─────
-                static int fusionLogCount = 0;
-                static bool loggedFirstValidDepth = false;
-                int nonZeroPixels = 0;
-                if (!depthData.empty()) {
-                    for (size_t i = 0; i < depthData.size() && i < static_cast<size_t>(arDepthWidth * arDepthHeight); i++) {
-                        if (depthData[i] > 0) nonZeroPixels++;
-                    }
-                }
-                bool shouldLog = (fusionLogCount < 5) || (!loggedFirstValidDepth && nonZeroPixels > 0);
-                if (shouldLog) {
-                    fusionLogCount++;
-                    if (nonZeroPixels > 0) loggedFirstValidDepth = true;
-                    LOGI("=== TSDF FUSION DEBUG (log #%d, valid=%s) ===", fusionLogCount, nonZeroPixels > 0 ? "YES" : "no");
-                    LOGI("  Depth image: %dx%d  stride=%d", arDepthWidth, arDepthHeight, depthStride);
-                    LOGI("  Camera intrinsics (raw): fx=%.1f fy=%.1f cx=%.1f cy=%.1f  imgSize=%dx%d",
-                         arDepthIntrinsics.fx, arDepthIntrinsics.fy,
-                         arDepthIntrinsics.cx, arDepthIntrinsics.cy,
-                         arDepthIntrinsics.w, arDepthIntrinsics.h);
-                    LOGI("  Scale factors: scaleX=%.4f  scaleY=%.4f", scaleX, scaleY);
-                    LOGI("  Scaled intrinsics: fx=%.2f fy=%.2f cx=%.2f cy=%.2f",
-                         fxScaled, fyScaled, cxScaled, cyScaled);
-                    LOGI("  View matrix (col-major):");
-                    LOGI("    [%.4f %.4f %.4f %.4f]", arViewMatrix[0], arViewMatrix[4], arViewMatrix[8], arViewMatrix[12]);
-                    LOGI("    [%.4f %.4f %.4f %.4f]", arViewMatrix[1], arViewMatrix[5], arViewMatrix[9], arViewMatrix[13]);
-                    LOGI("    [%.4f %.4f %.4f %.4f]", arViewMatrix[2], arViewMatrix[6], arViewMatrix[10], arViewMatrix[14]);
-                    LOGI("    [%.4f %.4f %.4f %.4f]", arViewMatrix[3], arViewMatrix[7], arViewMatrix[11], arViewMatrix[15]);
-
-                    // Project world origin to depth image to verify alignment
-                    float camX = arViewMatrix[12], camY = arViewMatrix[13], camZ = arViewMatrix[14];
-                    LOGI("  World origin in camera space: (%.3f, %.3f, %.3f)", camX, camY, camZ);
-                    if (camZ < 0.0f) {
-                        float invZ = 1.0f / (-camZ);
-                        float u_proj = fxScaled * camX * invZ + cxScaled;
-                        float v_proj = fyScaled * (-camY) * invZ + cyScaled;
-                        LOGI("  World origin projects to pixel: (%.1f, %.1f)  [image is %dx%d]",
-                             u_proj, v_proj, arDepthWidth, arDepthHeight);
-                    }
-
-                    // Log a few depth values from the buffer
-                    if (!depthData.empty()) {
-                        int cx_i = arDepthWidth / 2, cy_i = arDepthHeight / 2;
-                        uint16_t dCenter = depthData[cy_i * arDepthWidth + cx_i];
-                        uint16_t d00 = depthData[0];
-                        uint16_t dLast = depthData[arDepthWidth * arDepthHeight - 1];
-                        LOGI("  Depth samples: center=%u  [0,0]=%u  last=%u  (mm)", dCenter, d00, dLast);
-                        LOGI("  Non-zero depth pixels: %d / %d (%.1f%%)",
-                             nonZeroPixels, arDepthWidth * arDepthHeight,
-                             100.0f * nonZeroPixels / (arDepthWidth * arDepthHeight));
-                    }
-                    LOGI("=== END TSDF FUSION DEBUG ===");
-                }
-
-                gTsdfFusionOp->SetDepthBuffer(currentDepthBuffer);
-                gTsdfFusionOp->SetIntrinsics(fxScaled, fyScaled, cxScaled, cyScaled);
-                gTsdfFusionOp->SetViewMatrix(arViewMatrix);
-                gTsdfFusionOp->SetDepthDimensions(
-                    static_cast<uint32_t>(arDepthWidth),
-                    static_cast<uint32_t>(arDepthHeight));
-                gTsdfFusionOp->SetScale(100.0f);   // 1 voxel = 1 cm (128³ → 1.28m cube)
-                gTsdfFusionOp->SetVolumeSize(graphics::TsdfVolume::VOLUME_SIZE);
-                gTsdfFusionOp->SetTruncationDistance(0.04f); // 4 cm truncation (4 voxels at 1cm)
-                gTsdfFusionOp->SetMaxWeight(32.0f);          // low cap → new angles update faster
-                gTsdfFusionOp->Execute(cmd, frameIndex);
-                gTsdfFusionOp->InsertPostBarrier(cmd);
-            }
-
-            if (doMesh) {
-                // ── Stage 2: Marching cubes ─────────────────────────────
-                gWorldMesh->ResetCounters();
-                gMarchingCubesOp->SetScale(100.0f);
-                gMarchingCubesOp->SetMaxDistance(2.0f);
-                gMarchingCubesOp->SetMinWeight(2.0f);  // require 2+ observations
-                gMarchingCubesOp->Execute(cmd, frameIndex);
-                gMarchingCubesOp->InsertPostBarrier(cmd);
-                gWorldMesh->PrepareIndirectDraw(cmd);
-            }
-        }
-    } // depthImageHandle != nullptr
+    // Check if worker thread produced a new mesh — upload to GPU if so
+    reconstruction::ChiselManager::MeshOutput meshOut;
+    if (gChiselManager && gChiselManager->PollMesh(meshOut) && !meshOut.indices.empty()) {
+        uint32_t vertCount = static_cast<uint32_t>(meshOut.vertices.size() / 8);
+        uint32_t idxCount = static_cast<uint32_t>(meshOut.indices.size());
+        gWorldMesh->UpdateMesh(meshOut.vertices.data(), vertCount,
+                               meshOut.indices.data(), idxCount);
+    }
 
     ////////////////////////////
     // Update AR planes
