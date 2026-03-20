@@ -172,6 +172,10 @@ namespace reconstruction {
                                            cameraPose,
                                            camera);
 
+        // Prune distant chunks if we're over budget
+        Eigen::Vector3f camPos = cameraPose.translation();
+        PruneDistantChunks(camPos);
+
         // Update meshes for dirty chunks
         chisel_->UpdateMeshes();
 
@@ -205,6 +209,51 @@ namespace reconstruction {
             uint32_t numTris = static_cast<uint32_t>(meshOut.indices.size() / 3);
             LOGI("ChiselManager: frame %d — %zu chunks, %u verts, %u tris",
                  frameCount, numChunks, numVerts, numTris);
+        }
+    }
+
+    void ChiselManager::PruneDistantChunks(const Eigen::Vector3f& cameraPos) {
+        auto& chunkMgr = chisel_->GetMutableChunkManager();
+        const auto& chunks = chunkMgr.GetChunks();
+        size_t numChunks = chunks.size();
+
+        if (numChunks <= MAX_CHUNKS) return;
+
+        // Collect chunk IDs with their squared distances from camera
+        struct ChunkDist {
+            chisel::ChunkID id;
+            float distSq;
+        };
+        std::vector<ChunkDist> chunkDists;
+        chunkDists.reserve(numChunks);
+
+        float resolution = chunkMgr.GetResolution();
+        Eigen::Vector3i chunkSize = chunkMgr.GetChunkSize();
+        Eigen::Vector3f halfChunk = chunkSize.cast<float>() * resolution * 0.5f;
+
+        for (const auto& pair : chunks) {
+            Eigen::Vector3f origin = pair.first.cast<float>().cwiseProduct(
+                    chunkSize.cast<float>()) * resolution;
+            Eigen::Vector3f center = origin + halfChunk;
+            float distSq = (center - cameraPos).squaredNorm();
+            chunkDists.push_back({pair.first, distSq});
+        }
+
+        // Sort by distance (farthest first)
+        std::sort(chunkDists.begin(), chunkDists.end(),
+                  [](const ChunkDist& a, const ChunkDist& b) { return a.distSq > b.distSq; });
+
+        // Remove farthest chunks until we're back at MAX_CHUNKS
+        size_t toRemove = numChunks - MAX_CHUNKS;
+        size_t removed = 0;
+        for (size_t i = 0; i < toRemove && i < chunkDists.size(); i++) {
+            chunkMgr.RemoveChunk(chunkDists[i].id);
+            removed++;
+        }
+
+        if (removed > 0) {
+            LOGI("ChiselManager: pruned %zu distant chunks (%zu → %zu)",
+                 removed, numChunks, numChunks - removed);
         }
     }
 

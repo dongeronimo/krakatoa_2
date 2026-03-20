@@ -92,8 +92,11 @@ namespace reconstruction {
         std::condition_variable cv_;
         std::atomic<bool> running_{false};
 
+        static constexpr size_t MAX_CHUNKS = 2000;
+
         void WorkerLoop();
         void ProcessFrame(const FrameInput& input);
+        void PruneDistantChunks(const Eigen::Vector3f& cameraPos);
         void ConsolidateChunkMeshes(MeshOutput& out);
     };
 
