@@ -6,10 +6,20 @@
 #include "ring_buffer.h"
 namespace graphics {
     class CommandPoolManager;
+    /**
+     * Pre-allocated, ring-buffered mesh for streaming geometry every frame.
+     *
+     * Buffers are allocated ONCE at construction and reused via memcpy.
+     * Vertex buffer size = maxNumOfVerts * 8 * sizeof(float)   (pos3 + norm3 + uv2)
+     * Index buffer size  = maxNumOfVerts * 8 * sizeof(uint32_t)
+     */
     class MutableMesh : public Mesh {
     public:
+        static constexpr uint32_t DEFAULT_MAX_VERTS = 4096;
+
         MutableMesh(VkDevice device, VmaAllocator allocator,
                     CommandPoolManager& cmdManager,
+                    uint32_t maxNumOfVerts = DEFAULT_MAX_VERTS,
                     const std::string& name = "");
         ~MutableMesh();
         /**
@@ -22,7 +32,11 @@ namespace graphics {
         uint32_t GetVertexCount() const { return vertexCount.Current(); }
         void UpdateMesh(const float* vertices, uint32_t vertexCount,
                         const uint32_t* indices, uint32_t indexCount);
+        uint32_t GetMaxNumOfVerts() const { return maxNumOfVerts_; }
+        uint32_t GetMaxNumOfIndices() const { return maxNumOfIndices_; }
     private:
+        uint32_t maxNumOfVerts_;
+        uint32_t maxNumOfIndices_;
         /**One vertex buffer per frame*/
         utils::RingBuffer<VkBuffer> vertexBuffer;
         /**One index buffer per frame*/
@@ -31,6 +45,9 @@ namespace graphics {
         utils::RingBuffer<VmaAllocation> vertexBufferAllocation;
         /**Each buffer needs it's own allocation.*/
         utils::RingBuffer<VmaAllocation> indexBufferAllocation;
+        /**Persistently mapped pointers — one per ring slot*/
+        utils::RingBuffer<void*> vertexMappedPtr;
+        utils::RingBuffer<void*> indexMappedPtr;
         /**One vertex count for each frame*/
         utils::RingBuffer<uint32_t> vertexCount;
         /**One index count per frame*/
@@ -39,9 +56,7 @@ namespace graphics {
         utils::RingBuffer<uint64_t> slotGeneration;
         /**I use the name to set names for vulkan objects in renderdoc*/
         const std::string name;
-        /**We'll be creating buffers long since the object was instantiated.*/
         VkDevice device;
-        /**We'll be creating buffers long since the object was instantiated.*/
         VmaAllocator allocator;
         /**Last vertex data*/
         std::vector<float> pendingVertices;
@@ -52,30 +67,7 @@ namespace graphics {
         void AdvanceRingBuffers();
         void UpdateCurrentSlotIfPending();
         void UploadToCurrentSlot();
-        template <typename t>
-        void FillBuffer(VkBufferUsageFlags usage,
-                        const std::vector<t>& data,
-                        VmaAllocation& allocation,
-                        VkBuffer& buffer){
-            VkBufferCreateInfo bufInfo{};
-            bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-            bufInfo.size = data.size() * sizeof(t);
-            bufInfo.usage = usage;
-
-            VmaAllocationCreateInfo allocInfo{};
-            allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
-            allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
-                              | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-            VmaAllocationInfo mapInfo;
-            vmaCreateBuffer(allocator, &bufInfo, &allocInfo,
-                            &buffer,
-                            &allocation,
-                            &mapInfo);
-
-            memcpy(mapInfo.pMappedData, data.data(), data.size() * sizeof(t));
-        }
-        void SetObjectsNames();
+        void AllocateSlotBuffers(int slot);
     };
 }
 

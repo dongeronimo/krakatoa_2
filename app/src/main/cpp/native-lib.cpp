@@ -238,10 +238,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                                                              gVkContext->GetAllocator(),
                                                              "ArDepthImage");
 
-    // Create CPU-uploaded mesh for OpenChisel output (replaces GpuMesh)
+    // Create CPU-uploaded mesh for OpenChisel output (replaces GpuMesh).
+    // Pre-allocate for up to 500K vertices — enough for a room-scale scan.
     gWorldMesh = std::make_unique<graphics::MutableMesh>(gVkContext->GetDevice(),
                                                           gVkContext->GetAllocator(),
                                                           *gCommandPoolManager,
+                                                          500000,
                                                           "WorldMesh");
     // OpenChisel-based reconstruction manager (worker thread handles integration)
     gChiselManager = std::make_unique<reconstruction::ChiselManager>();
@@ -627,6 +629,7 @@ void UpdateARPlanes() {
             graphics::MutableMesh* newMesh = new graphics::MutableMesh(gVkContext->GetDevice(),
                                                                        gVkContext->GetAllocator(),
                                                                        *(gCommandPoolManager.get()),
+                                                                       graphics::MutableMesh::DEFAULT_MAX_VERTS,
                                                                        name);
             newRenderable->SetMesh(newMesh, true);
             gArPlanes.insert({planeid, newRenderable});
