@@ -240,6 +240,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                                                           gVkContext->GetAllocator(),
                                                           *gCommandPoolManager,
                                                           WORLD_MESH_MAX_VERTICES,
+                                                          WORLD_MESH_MAX_INDICES,
                                                           "WorldMesh");
     // OpenChisel-based reconstruction manager (worker thread handles integration)
     gChiselManager = std::make_unique<reconstruction::ChiselManager>();

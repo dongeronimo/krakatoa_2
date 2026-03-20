@@ -16,10 +16,12 @@ namespace graphics {
     class MutableMesh : public Mesh {
     public:
         static constexpr uint32_t DEFAULT_MAX_VERTS = 4096;
+        static constexpr uint32_t DEFAULT_MAX_INDICES = DEFAULT_MAX_VERTS * 3;
 
         MutableMesh(VkDevice device, VmaAllocator allocator,
                     CommandPoolManager& cmdManager,
                     uint32_t maxNumOfVerts = DEFAULT_MAX_VERTS,
+                    uint32_t maxNumOfIndices = DEFAULT_MAX_INDICES,
                     const std::string& name = "");
         ~MutableMesh();
         /**

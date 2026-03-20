@@ -14,9 +14,10 @@ void graphics::MutableMesh::Advance() {
 graphics::MutableMesh::MutableMesh(VkDevice device, VmaAllocator allocator,
                                    graphics::CommandPoolManager &cmdManager,
                                    uint32_t maxNumOfVerts,
+                                   uint32_t maxNumOfIndices,
                                    const std::string &name):
                                    maxNumOfVerts_(maxNumOfVerts),
-                                   maxNumOfIndices_(maxNumOfVerts * 8),
+                                   maxNumOfIndices_(maxNumOfIndices),
                                    name(name), device(device), allocator(allocator){
     LOGI("MutableMesh '%s': pre-allocating %u max verts (%zu KB vtx, %zu KB idx) x %d slots",
          name.c_str(), maxNumOfVerts,
