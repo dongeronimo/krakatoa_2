@@ -49,13 +49,6 @@ FetchContent_Declare(
         GIT_SHALLOW TRUE
 )
 
-# Configure Eigen - header-only, skip everything else
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
-set(EIGEN_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(EIGEN_BUILD_PKGCONFIG OFF CACHE BOOL "" FORCE)
-set(EIGEN_BUILD_BTL OFF CACHE BOOL "" FORCE)
-
 # Configure Assimp - minimal build
 set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
@@ -69,7 +62,17 @@ set(ASSIMP_ANDROID_JNIIOSYSTEM OFF CACHE BOOL "" FORCE)
 set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
 
 message(STATUS "Fetching dependencies...")
-FetchContent_MakeAvailable(glm assimp json eigen open_chisel)
+# Eigen is header-only: just download, don't run its CMake (avoids SuperLU/BLAS issues)
+FetchContent_GetProperties(eigen)
+if(NOT eigen_POPULATED)
+    FetchContent_Populate(eigen)
+endif()
+# OpenChisel: just download, skip its catkin-based CMake
+FetchContent_GetProperties(open_chisel)
+if(NOT open_chisel_POPULATED)
+    FetchContent_Populate(open_chisel)
+endif()
+FetchContent_MakeAvailable(glm assimp json)
 
 # Build OpenChisel core library (skip its catkin/ROS build system entirely)
 add_library(open_chisel STATIC
@@ -92,8 +95,8 @@ add_library(open_chisel STATIC
 )
 target_include_directories(open_chisel PUBLIC
         ${open_chisel_SOURCE_DIR}/open_chisel/include
+        ${eigen_SOURCE_DIR}
 )
-target_link_libraries(open_chisel PUBLIC Eigen3::Eigen)
 target_compile_options(open_chisel PRIVATE -O2 -DNDEBUG -Wno-error)
 
 # 16KB page size alignment for Android 15+
