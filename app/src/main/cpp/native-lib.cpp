@@ -627,6 +627,7 @@ void UpdateARPlanes() {
                                                                        gVkContext->GetAllocator(),
                                                                        *(gCommandPoolManager.get()),
                                                                        graphics::MutableMesh::DEFAULT_MAX_VERTS,
+                                                                       graphics::MutableMesh::DEFAULT_MAX_INDICES,
                                                                        name);
             newRenderable->SetMesh(newMesh, true);
             gArPlanes.insert({planeid, newRenderable});
