@@ -158,7 +158,7 @@ namespace reconstruction {
         camera.SetWidth(input.width);
         camera.SetHeight(input.height);
         camera.SetNearPlane(0.1f);
-        camera.SetFarPlane(5.0f);
+        camera.SetFarPlane(3.5f);
 
         // Convert view matrix (world→camera, column-major) to camera pose (camera→world)
         // ARCore gives us V = world→camera, OpenChisel wants T = camera→world = V⁻¹
