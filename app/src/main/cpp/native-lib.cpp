@@ -72,9 +72,6 @@ std::unique_ptr<reconstruction::ChiselManager> gChiselManager = nullptr;
 std::unique_ptr<graphics::Texture2D> gMeshTexture = nullptr;
 std::unique_ptr<graphics::Pipeline> gWorldMeshPipeline = nullptr;
 std::unique_ptr<graphics::Renderable> gWorldMeshRenderable = nullptr;
-// Marching cubes output capacity
-static constexpr uint32_t MC_MAX_VERTICES = 500'000;
-static constexpr uint32_t MC_MAX_INDICES  = 1'500'000;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -239,11 +236,10 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                                                              "ArDepthImage");
 
     // Create CPU-uploaded mesh for OpenChisel output (replaces GpuMesh).
-    // Pre-allocate for up to 500K vertices — enough for a room-scale scan.
     gWorldMesh = std::make_unique<graphics::MutableMesh>(gVkContext->GetDevice(),
                                                           gVkContext->GetAllocator(),
                                                           *gCommandPoolManager,
-                                                          500000,
+                                                          WORLD_MESH_MAX_VERTICES,
                                                           "WorldMesh");
     // OpenChisel-based reconstruction manager (worker thread handles integration)
     gChiselManager = std::make_unique<reconstruction::ChiselManager>();
