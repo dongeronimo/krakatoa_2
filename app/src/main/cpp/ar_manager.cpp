@@ -54,7 +54,9 @@ namespace ar {
         m_loader.ArConfig_setPlaneFindingMode(m_session, m_config,
                                               AR_PLANE_FINDING_MODE_HORIZONTAL_AND_VERTICAL);
         // TEMPORARY: turn on flash/torch so AR works in dark rooms
-        m_loader.ArConfig_setFlashMode(m_session, m_config, AR_FLASH_MODE_TORCH);
+        if (m_loader.ArConfig_setFlashMode) {
+            m_loader.ArConfig_setFlashMode(m_session, m_config, AR_FLASH_MODE_TORCH);
+        }
 
         LOGI("ARSessionManager::initialize - configuring session...");
         status = m_loader.ArSession_configure(m_session, m_config);

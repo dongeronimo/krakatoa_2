@@ -65,7 +65,12 @@ namespace ar {
             LOAD_ARCORE_FUNC(ArConfig_destroy);
             LOAD_ARCORE_FUNC(ArConfig_setDepthMode);
             LOAD_ARCORE_FUNC(ArConfig_setPlaneFindingMode);
-            LOAD_ARCORE_FUNC(ArConfig_setFlashMode);
+            // Optional — not available on all ARCore versions
+            ArConfig_setFlashMode = reinterpret_cast<decltype(ArConfig_setFlashMode)>(
+                dlsym(handle_, "ArConfig_setFlashMode"));
+            if (!ArConfig_setFlashMode) {
+                LOGE("ArConfig_setFlashMode not available, flash disabled");
+            }
 
             // Frame functions
             LOAD_ARCORE_FUNC(ArFrame_create);
