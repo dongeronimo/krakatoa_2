@@ -93,7 +93,7 @@ add_library(open_chisel STATIC
         ${open_chisel_SOURCE_DIR}/open_chisel/src/mesh/Mesh.cpp
         ${open_chisel_SOURCE_DIR}/open_chisel/src/pointcloud/PointCloud.cpp
 )
-target_include_directories(open_chisel PUBLIC
+target_include_directories(open_chisel SYSTEM PUBLIC
         ${open_chisel_SOURCE_DIR}/open_chisel/include
         ${eigen_SOURCE_DIR}
 )
