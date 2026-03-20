@@ -65,6 +65,7 @@ namespace ar {
             LOAD_ARCORE_FUNC(ArConfig_destroy);
             LOAD_ARCORE_FUNC(ArConfig_setDepthMode);
             LOAD_ARCORE_FUNC(ArConfig_setPlaneFindingMode);
+            LOAD_ARCORE_FUNC(ArConfig_setFlashMode);
 
             // Frame functions
             LOAD_ARCORE_FUNC(ArFrame_create);
@@ -185,6 +186,8 @@ namespace ar {
                                       ArDepthMode mode) = nullptr;
         void (*ArConfig_setPlaneFindingMode)(const ArSession* session, ArConfig* config,
                                              ArPlaneFindingMode mode) = nullptr;
+        void (*ArConfig_setFlashMode)(const ArSession* session, ArConfig* config,
+                                      ArFlashMode flash_mode) = nullptr;
 
         // ── Frame ──
         ArStatus (*ArFrame_create)(const ArSession* session, ArFrame** out_frame) = nullptr;
