@@ -137,7 +137,11 @@ namespace reconstruction {
     }
 
     void ChiselManager::ProcessFrame(const FrameInput& input) {
-        if (input.depthData.empty() || input.width <= 0 || input.height <= 0) return;
+        if (input.depthData.empty() || input.width <= 0 || input.height <= 0) {
+            LOGI("[TSDF] ProcessFrame: skipping (empty=%d, w=%d, h=%d)",
+                 (int)input.depthData.empty(), input.width, input.height);
+            return;
+        }
 
         // Build the depth image (convert uint16 mm → float meters)
         auto depthImage = std::make_shared<chisel::DepthImage<float>>(input.width, input.height);
@@ -166,11 +170,15 @@ namespace reconstruction {
         Eigen::Affine3f cameraPose;
         cameraPose.matrix() = viewMat.inverse();
 
+        size_t chunksBefore = chisel_->GetChunkManager().GetChunks().size();
+
         // Integrate
         chisel_->IntegrateDepthScan<float>(integrator_,
                                            depthImage,
                                            cameraPose,
                                            camera);
+
+        size_t chunksAfter = chisel_->GetChunkManager().GetChunks().size();
 
         // Prune distant chunks if we're over budget
         Eigen::Vector3f camPos = cameraPose.translation();
@@ -204,11 +212,14 @@ namespace reconstruction {
         static int frameCount = 0;
         frameCount++;
         if (frameCount <= 5 || frameCount % 30 == 0) {
-            size_t numChunks = chisel_->GetChunkManager().GetAllMeshes().size();
+            size_t numMeshes = chisel_->GetChunkManager().GetAllMeshes().size();
+            size_t numChunks = chisel_->GetChunkManager().GetChunks().size();
             uint32_t numVerts = static_cast<uint32_t>(meshOut.vertices.size() / 8);
             uint32_t numTris = static_cast<uint32_t>(meshOut.indices.size() / 3);
-            LOGI("ChiselManager: frame %d — %zu chunks, %u verts, %u tris",
-                 frameCount, numChunks, numVerts, numTris);
+            Eigen::Vector3f cp = cameraPose.translation();
+            LOGI("[TSDF] frame %d — %zu chunks (%zu before integ → %zu after), %zu meshes, %u verts, %u tris | cam=(%.2f,%.2f,%.2f)",
+                 frameCount, numChunks, chunksBefore, chunksAfter, numMeshes, numVerts, numTris,
+                 cp.x(), cp.y(), cp.z());
         }
     }
 

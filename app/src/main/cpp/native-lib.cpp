@@ -402,7 +402,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         // Lazy-init OpenChisel on first valid depth frame
         if (!gChiselManager->IsInitialized()) {
             assert(arDepthWidth > 0 && arDepthHeight > 0 && "Depth image has zero dimensions");
-            gChiselManager->Initialize();  // 2cm voxels, 10cm truncation, auto thread count
+            gChiselManager->Initialize();  // 3cm voxels, 10cm truncation, auto thread count
+            LOGI("[TSDF] Initialized ChiselManager on first depth frame (%dx%d)", arDepthWidth, arDepthHeight);
         }
 
         // Get depth data from ARCore
@@ -411,11 +412,42 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
         gArSessionManager->releaseDepthImage(depthImageHandle);
 
+        // Diagnostic: check depth data quality
+        static int depthFrameCount = 0;
+        depthFrameCount++;
+        if (depthFrameCount <= 5 || depthFrameCount % 60 == 0) {
+            int nonZero = 0;
+            uint16_t minVal = UINT16_MAX, maxVal = 0;
+            for (uint16_t v : depthData) {
+                if (v > 0) {
+                    nonZero++;
+                    if (v < minVal) minVal = v;
+                    if (v > maxVal) maxVal = v;
+                }
+            }
+            LOGI("[TSDF] depth frame %d: %dx%d, %d/%zu non-zero (%.1f%%), range %u-%u mm",
+                 depthFrameCount, arDepthWidth, arDepthHeight,
+                 nonZero, depthData.size(),
+                 depthData.empty() ? 0.0 : 100.0 * nonZero / depthData.size(),
+                 nonZero > 0 ? (unsigned)minVal : 0u,
+                 nonZero > 0 ? (unsigned)maxVal : 0u);
+        }
+
         // Get camera intrinsics scaled to depth resolution
         ar::ArDepthIntrinsics arDepthIntrinsics{};
         gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
         float scaleX = static_cast<float>(arDepthWidth)  / static_cast<float>(arDepthIntrinsics.w);
         float scaleY = static_cast<float>(arDepthHeight) / static_cast<float>(arDepthIntrinsics.h);
+
+        if (depthFrameCount <= 3) {
+            LOGI("[TSDF] intrinsics: cam(%dx%d) fx=%.1f fy=%.1f cx=%.1f cy=%.1f → depth scale %.3f x %.3f → fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
+                 arDepthIntrinsics.w, arDepthIntrinsics.h,
+                 arDepthIntrinsics.fx, arDepthIntrinsics.fy,
+                 arDepthIntrinsics.cx, arDepthIntrinsics.cy,
+                 scaleX, scaleY,
+                 arDepthIntrinsics.fx * scaleX, arDepthIntrinsics.fy * scaleY,
+                 arDepthIntrinsics.cx * scaleX, arDepthIntrinsics.cy * scaleY);
+        }
 
         // Get view matrix (world → camera)
         std::array<float, 16> arViewMatrix{};
@@ -432,6 +464,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         frameInput.cy = arDepthIntrinsics.cy * scaleY;
         frameInput.viewMatrix = arViewMatrix;
         gChiselManager->IntegrateFrame(frameInput);
+    } else {
+        static int depthNullCount = 0;
+        depthNullCount++;
+        if (depthNullCount <= 3 || depthNullCount % 120 == 0) {
+            LOGI("[TSDF] getDepthImage returned nullptr (%d times so far)", depthNullCount);
+        }
     }
 
     // Check if worker thread produced a new mesh — upload to GPU if so
@@ -441,6 +479,11 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         uint32_t idxCount = static_cast<uint32_t>(meshOut.indices.size());
         gWorldMesh->UpdateMesh(meshOut.vertices.data(), vertCount,
                                meshOut.indices.data(), idxCount);
+        static int meshUploadCount = 0;
+        meshUploadCount++;
+        if (meshUploadCount <= 5 || meshUploadCount % 60 == 0) {
+            LOGI("[TSDF] mesh upload #%d: %u verts, %u indices", meshUploadCount, vertCount, idxCount);
+        }
     }
 
     ////////////////////////////
