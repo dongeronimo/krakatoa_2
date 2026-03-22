@@ -172,11 +172,18 @@ namespace reconstruction {
         camera.SetNearPlane(kNearPlane);
         camera.SetFarPlane(kFarPlane);
 
-        // Convert view matrix (world→camera, column-major) to camera pose (camera→world)
-        // ARCore gives us V = world→camera, OpenChisel wants T = camera→world = V⁻¹
+        // Convert view matrix (world→camera, column-major) to camera pose (camera→world).
+        // ARCore uses OpenGL convention (forward = -Z, up = +Y).
+        // Open Chisel uses CV convention  (forward = +Z, up = -Y).
+        // After inverting the view matrix to get camera→world, we right-multiply
+        // by a Y/Z flip so that Open Chisel's unprojected points (z = +depth)
+        // end up in front of the camera rather than behind it.
         Eigen::Map<const Eigen::Matrix4f> viewMat(input.viewMatrix.data());
+        Eigen::Matrix4f glToCv = Eigen::Matrix4f::Identity();
+        glToCv(1, 1) = -1.0f;  // Y: up → down
+        glToCv(2, 2) = -1.0f;  // Z: back → forward
         Eigen::Affine3f cameraPose;
-        cameraPose.matrix() = viewMat.inverse();
+        cameraPose.matrix() = viewMat.inverse() * glToCv;
 
         size_t chunksBefore = chisel_->GetChunkManager().GetChunks().size();
 
