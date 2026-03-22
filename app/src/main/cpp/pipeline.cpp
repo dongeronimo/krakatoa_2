@@ -517,12 +517,15 @@ PipelineConfig graphics::OpaquePhongConfig(glm::vec3 color) {
     // No blending
     config.blendEnable = false;
 
-    // No culling: the offscreen pass uses an OpenGL projection matrix (Y-up)
-    // which reverses apparent winding in Vulkan's rasterizer (Y-down).
-    // The compose pass corrects this via UV flip, but the rasterizer
-    // sees CW winding for originally-CCW triangles, so backface culling
-    // would cull everything.
-    config.cullMode = VK_CULL_MODE_NONE;
+    // The offscreen pass uses ARCore's OpenGL projection matrix (Y-up)
+    // without a Y-flip — the compose pass handles it via UV flip instead.
+    // This reverses apparent winding in Vulkan's rasterizer: originally-CCW
+    // triangles appear CW.  Tell the rasterizer that CW = front so that:
+    //   1. Backface culling removes actual back faces (not front ones)
+    //   2. gl_FrontFacing is correct for front-facing geometry
+    //   3. The normal flip (if !gl_FrontFacing N = -N) fires on true back faces only
+    config.cullMode  = VK_CULL_MODE_BACK_BIT;
+    config.frontFace = VK_FRONT_FACE_CLOCKWISE;
 
     // Only UBO descriptor (no texture sampler)
     config.descriptorPoolSizes = {
