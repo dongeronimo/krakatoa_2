@@ -450,8 +450,33 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         }
 
         // Get view matrix (world → camera)
+        // ArCamera_getViewMatrix returns a display-oriented view matrix (axes
+        // aligned with the screen), but the depth image and intrinsics from
+        // ArCamera_getImageIntrinsics are in sensor (unrotated) coordinates.
+        // We must undo the display rotation so the view matrix matches the
+        // depth image coordinate frame.
         std::array<float, 16> arViewMatrix{};
         gArSessionManager->getViewMatrix(arViewMatrix.data());
+        {
+            // Build a Z-rotation matrix to convert from display-oriented camera
+            // back to sensor-oriented camera.  Display rotation r means the
+            // display is rotated r×90° CCW from the sensor, so the view matrix
+            // has an extra Rz(-r×90°) baked in.  Undo it with Rz(+r×90°).
+            const int r = gDisplayRotation;       // 0,1,2,3
+            // cos/sin for 0°,90°,180°,270°
+            static constexpr float kCos[] = { 1.f, 0.f,-1.f, 0.f};
+            static constexpr float kSin[] = { 0.f, 1.f, 0.f,-1.f};
+            const float c = kCos[r & 3];
+            const float s = kSin[r & 3];
+            // Rz(r×90°) — column-major 4×4 (only affects first two rows)
+            // result = Rz * viewMat
+            glm::mat4 vm = glm::make_mat4(arViewMatrix.data());
+            glm::mat4 rz(1.0f);
+            rz[0][0] =  c; rz[1][0] = -s;   // row 0
+            rz[0][1] =  s; rz[1][1] =  c;   // row 1
+            glm::mat4 sensorView = rz * vm;
+            memcpy(arViewMatrix.data(), glm::value_ptr(sensorView), sizeof(float) * 16);
+        }
 
         // Queue frame for async integration (non-blocking)
         reconstruction::ChiselManager::FrameInput frameInput;
