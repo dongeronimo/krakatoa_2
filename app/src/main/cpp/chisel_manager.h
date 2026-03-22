@@ -52,9 +52,9 @@ namespace reconstruction {
 
         /// Call once when depth image dimensions are first known.
         /// threadCount=0 → auto-detect: max(1, hardware_concurrency / 2)
-        void Initialize(float voxelResolution = 0.005f,
-                        float truncationDist = 0.02f,
-                        float carvingDist = 0.02f,
+        void Initialize(float voxelResolution = 0.01f,
+                        float truncationDist = 0.04f,
+                        float carvingDist = 0.04f,
                         bool enableCarving = true,
                         int chunkSizeVoxels = 16,
                         int threadCount = 0);
