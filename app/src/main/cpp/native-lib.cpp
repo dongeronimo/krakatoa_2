@@ -433,7 +433,10 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                  nonZero > 0 ? (unsigned)maxVal : 0u);
         }
 
-        // Get camera intrinsics scaled to depth resolution
+        // Get camera intrinsics scaled to depth resolution.
+        // ArCamera_getImageIntrinsics returns values for the full-resolution CPU image
+        // (e.g. 1920x1080), but the depth image is lower-res (e.g. 240x180).
+        // Scale fx/fy/cx/cy by the ratio so they match the depth image pixel grid.
         ar::ArDepthIntrinsics arDepthIntrinsics{};
         gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
         float scaleX = static_cast<float>(arDepthWidth)  / static_cast<float>(arDepthIntrinsics.w);

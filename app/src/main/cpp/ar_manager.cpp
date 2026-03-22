@@ -493,6 +493,9 @@ namespace ar {
             m_loader.ArTrackable_release(trackable);
         }
     }
+    /// Acquires the current depth image from ARCore.
+    /// Returns nullptr if depth is not available (e.g. not tracking, no ToF sensor ready).
+    /// Caller must release the returned ArImage via releaseDepthImage().
     ArImage* ARSessionManager::getDepthImage() {
         if (!m_isTracking) {
             return nullptr;
@@ -507,11 +510,16 @@ namespace ar {
         }
         return depthImage;
     }
+    /// Returns depth image dimensions in sensor (unrotated) coordinates.
+    /// Width is the sensor's horizontal extent, height is vertical.
     void ARSessionManager::getDepthImageDimensions(ArImage* image, int32_t& w, int32_t& h) {
         w = 0, h = 0;
         m_loader.ArImage_getWidth(m_session, image, &w);
         m_loader.ArImage_getHeight(m_session, image, &h);
     }
+    /// Extracts depth pixel data from an ArImage into a tightly-packed uint16 vector.
+    /// Each pixel is depth in millimeters. Row padding from the hardware buffer is stripped
+    /// so the output is exactly width*height elements, indexed as data[v * width + u].
     void ARSessionManager::getDepthImageData(ArImage* image, std::vector<uint16_t>& data, int32_t& stride) {
         const uint8_t* rawData = nullptr;
         int32_t dataLength = 0;
@@ -542,25 +550,28 @@ namespace ar {
         m_loader.ArImage_release(image);
     }
 
+    /// Returns the camera's pinhole intrinsics in sensor (unrotated) coordinates.
+    /// These are for the CPU image stream (not the GPU texture stream).
+    /// The returned (w, h) are the native image resolution — callers must scale
+    /// fx/fy/cx/cy if the depth image has a different resolution.
     void ARSessionManager::getCameraIntrinsics(ArDepthIntrinsics& out_intrinsics) {
-        //TODO deproject (done): get the camera
         ArCamera* camera;
         m_loader.ArFrame_acquireCamera(m_session, m_frame, &camera);
-        //TODO deproject (done): get the properties
+
         ArCameraIntrinsics* intrinsics;
         m_loader.ArCameraIntrinsics_create(m_session, &intrinsics);
         m_loader.ArCamera_getImageIntrinsics(m_session, camera, intrinsics);
+
         float out_fx, out_fy;
         float out_cx, out_cy;
         int32_t out_w, out_h;
         m_loader.ArCameraIntrinsics_getFocalLength(m_session, intrinsics, &out_fx, &out_fy);
         m_loader.ArCameraIntrinsics_getPrincipalPoint(m_session, intrinsics, &out_cx, &out_cy);
         m_loader.ArCameraIntrinsics_getImageDimensions(m_session, intrinsics, &out_w, &out_h);
-        //TODO deproject (done): release the intrinsics
+
         m_loader.ArCameraIntrinsics_destroy(intrinsics);
-        //TODO deproject (done): release the camera
         m_loader.ArCamera_release(camera);
-        //TODO deproject (done): return the values
+
         out_intrinsics.fx = out_fx;
         out_intrinsics.fy = out_fy;
         out_intrinsics.cx = out_cx;
