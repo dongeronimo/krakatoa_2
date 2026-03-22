@@ -517,8 +517,12 @@ PipelineConfig graphics::OpaquePhongConfig(glm::vec3 color) {
     // No blending
     config.blendEnable = false;
 
-    // Backface culling
-    config.cullMode = VK_CULL_MODE_BACK_BIT;
+    // No culling: the offscreen pass uses an OpenGL projection matrix (Y-up)
+    // which reverses apparent winding in Vulkan's rasterizer (Y-down).
+    // The compose pass corrects this via UV flip, but the rasterizer
+    // sees CW winding for originally-CCW triangles, so backface culling
+    // would cull everything.
+    config.cullMode = VK_CULL_MODE_NONE;
 
     // Only UBO descriptor (no texture sampler)
     config.descriptorPoolSizes = {
