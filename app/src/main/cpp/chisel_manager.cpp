@@ -39,12 +39,15 @@ namespace reconstruction {
         Eigen::Vector3i chunkSize(chunkSizeVoxels, chunkSizeVoxels, chunkSizeVoxels);
         chisel_ = std::make_shared<chisel::Chisel>(chunkSize, voxelResolution, false);
 
-        // Set up the projection integrator
+        // Set up the projection integrator with pre-computed voxel centroids.
+        // The centroids are the 3D positions of each voxel center within a canonical chunk.
+        // Without these, the integrator's inner loop is empty and no voxels get updated.
         auto truncator = std::make_shared<chisel::ConstantTruncator>(truncationDist);
         auto weighter = std::make_shared<chisel::ConstantWeighter>(1.0f);
 
-        // Centroids are computed per-chunk during integration, pass empty for now
-        chisel::Vec3List centroids;
+        const chisel::Vec3List& centroids = chisel_->GetChunkManager().GetCentroids();
+        LOGI("ChiselManager: centroid count = %zu (expected %d)",
+             centroids.size(), chunkSizeVoxels * chunkSizeVoxels * chunkSizeVoxels);
         integrator_ = chisel::ProjectionIntegrator(truncator, weighter,
                                                     carvingDist, enableCarving,
                                                     centroids);
@@ -144,11 +147,16 @@ namespace reconstruction {
         }
 
         // Build the depth image (convert uint16 mm → float meters)
+        // Clamp to [nearPlane, farPlane] — values outside this range are invalid
+        // and would cause IntegrateDepthScan to create a huge frustum, leading to OOM.
+        constexpr float kNearPlane = 0.1f;
+        constexpr float kFarPlane = 3.5f;
         auto depthImage = std::make_shared<chisel::DepthImage<float>>(input.width, input.height);
         float* depthPtr = depthImage->GetMutableData();
         for (int i = 0; i < input.width * input.height; i++) {
             uint16_t raw = input.depthData[i];
-            depthPtr[i] = (raw == 0) ? 0.0f : static_cast<float>(raw) / 1000.0f;
+            float d = (raw == 0) ? 0.0f : static_cast<float>(raw) / 1000.0f;
+            depthPtr[i] = (d >= kNearPlane && d <= kFarPlane) ? d : 0.0f;
         }
 
         // Set up camera intrinsics
@@ -161,8 +169,8 @@ namespace reconstruction {
         camera.SetIntrinsics(intrinsics);
         camera.SetWidth(input.width);
         camera.SetHeight(input.height);
-        camera.SetNearPlane(0.1f);
-        camera.SetFarPlane(3.5f);
+        camera.SetNearPlane(kNearPlane);
+        camera.SetFarPlane(kFarPlane);
 
         // Convert view matrix (world→camera, column-major) to camera pose (camera→world)
         // ARCore gives us V = world→camera, OpenChisel wants T = camera→world = V⁻¹
