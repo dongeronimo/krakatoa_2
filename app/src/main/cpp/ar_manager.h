@@ -90,6 +90,12 @@ namespace ar {
                 )>& fn);
 
         void getViewMatrix(float* outMatrix);
+        /// Returns a view matrix (world → camera) based on the physical
+        /// (sensor-oriented) camera pose from ArCamera_getPose.
+        /// Unlike getViewMatrix(), the axes are NOT rotated to match the
+        /// display — they match the camera sensor, which is what the depth
+        /// image and unrotated intrinsics expect.
+        void getSensorViewMatrix(float* outMatrix);
         void getProjectionMatrix(float nearClip, float farClip, float* outMatrix);
         void getDepthImageDimensions(ArImage* image, int32_t& w, int32_t& h);
         void getDepthImageData(ArImage* image, std::vector<uint16_t>& data, int32_t& stride);

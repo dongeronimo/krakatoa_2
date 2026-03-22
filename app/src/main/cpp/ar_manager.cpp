@@ -224,6 +224,45 @@ namespace ar {
         m_loader.ArCamera_release(camera);
     }
 
+    void ARSessionManager::getSensorViewMatrix(float* outMatrix) {
+        ArCamera* camera = nullptr;
+        m_loader.ArFrame_acquireCamera(m_session, m_frame, &camera);
+
+        // Get physical (sensor-oriented) camera pose as quaternion + translation
+        ArPose* pose = nullptr;
+        m_loader.ArPose_create(m_session, nullptr, &pose);
+        m_loader.ArCamera_getPose(m_session, camera, pose);
+
+        float raw[7]; // qx, qy, qz, qw, tx, ty, tz
+        m_loader.ArPose_getPoseRaw(m_session, pose, raw);
+
+        m_loader.ArPose_destroy(pose);
+        m_loader.ArCamera_release(camera);
+
+        // Convert quaternion (qx,qy,qz,qw) + translation to a 4x4 column-major
+        // camera-to-world matrix, then invert to get view matrix (world→camera).
+        const float qx = raw[0], qy = raw[1], qz = raw[2], qw = raw[3];
+        const float tx = raw[4], ty = raw[5], tz = raw[6];
+
+        // Rotation matrix from quaternion (column-major)
+        const float xx = qx*qx, yy = qy*qy, zz = qz*qz;
+        const float xy = qx*qy, xz = qx*qz, yz = qy*qz;
+        const float wx = qw*qx, wy = qw*qy, wz = qw*qz;
+
+        // Camera-to-world rotation (R) columns:
+        float R[9];
+        R[0] = 1 - 2*(yy+zz); R[3] = 2*(xy-wz);     R[6] = 2*(xz+wy);
+        R[1] = 2*(xy+wz);     R[4] = 1 - 2*(xx+zz);  R[7] = 2*(yz-wx);
+        R[2] = 2*(xz-wy);     R[5] = 2*(yz+wx);      R[8] = 1 - 2*(xx+yy);
+
+        // View matrix = inverse of pose = R^T | -R^T * t
+        // Column-major 4x4:
+        outMatrix[ 0] = R[0]; outMatrix[ 4] = R[1]; outMatrix[ 8] = R[2]; outMatrix[12] = -(R[0]*tx + R[1]*ty + R[2]*tz);
+        outMatrix[ 1] = R[3]; outMatrix[ 5] = R[4]; outMatrix[ 9] = R[5]; outMatrix[13] = -(R[3]*tx + R[4]*ty + R[5]*tz);
+        outMatrix[ 2] = R[6]; outMatrix[ 6] = R[7]; outMatrix[10] = R[8]; outMatrix[14] = -(R[6]*tx + R[7]*ty + R[8]*tz);
+        outMatrix[ 3] = 0;    outMatrix[ 7] = 0;    outMatrix[11] = 0;    outMatrix[15] = 1;
+    }
+
     void ARSessionManager::queryAvailableResolutions() {
         m_resolutions.clear();
         m_currentResolutionIndex = -1;

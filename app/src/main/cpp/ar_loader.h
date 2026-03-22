@@ -84,6 +84,7 @@ namespace ar {
             // Camera functions
             LOAD_ARCORE_FUNC(ArCamera_getViewMatrix);
             LOAD_ARCORE_FUNC(ArCamera_getProjectionMatrix);
+            LOAD_ARCORE_FUNC(ArCamera_getPose);
             LOAD_ARCORE_FUNC(ArCamera_getTrackingState);
             LOAD_ARCORE_FUNC(ArCamera_release);
 
@@ -214,6 +215,8 @@ namespace ar {
                                        float* out_col_major_4x4) = nullptr;
         void (*ArCamera_getProjectionMatrix)(const ArSession* session, const ArCamera* camera,
                                              float near, float far, float* dest_col_major_4x4) = nullptr;
+        void (*ArCamera_getPose)(const ArSession* session, const ArCamera* camera,
+                                  ArPose* out_pose) = nullptr;
         void (*ArCamera_getTrackingState)(const ArSession* session, const ArCamera* camera,
                                           ArTrackingState* out_tracking_state) = nullptr;
         void (*ArCamera_release)(ArCamera* camera) = nullptr;
