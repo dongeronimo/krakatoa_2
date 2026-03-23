@@ -166,8 +166,10 @@ namespace reconstruction {
             }
         }
 
-        float effectiveFar = (maxObservedDepth > 0.0f)
-            ? maxObservedDepth : kNearPlane;
+        // If no valid depth pixels in this frame, skip integration entirely
+        if (maxObservedDepth <= 0.0f) return;
+
+        float effectiveFar = maxObservedDepth;
 
         // Set up camera intrinsics
         chisel::PinholeCamera camera;

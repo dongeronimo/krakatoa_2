@@ -93,7 +93,7 @@ namespace reconstruction {
         std::atomic<bool> running_{false};
 
         static constexpr size_t MAX_CHUNKS = 2000;
-        float truncation_ = 0.04f;  // stored from Initialize()
+        float truncation_ = 0.10f;  // stored from Initialize()
 
         /// How many TSDF integrations to run before extracting a new mesh.
         /// Lower = more responsive visuals but slower integration throughput.

@@ -402,7 +402,14 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         // Lazy-init OpenChisel on first valid depth frame
         if (!gChiselManager->IsInitialized()) {
             assert(arDepthWidth > 0 && arDepthHeight > 0 && "Depth image has zero dimensions");
-            gChiselManager->Initialize();  // 3cm voxels, 10cm truncation, auto thread count
+            gChiselManager->Initialize(
+                0.03f,   // voxelResolution: 3cm voxels (each 16³ chunk = 48cm per side)
+                0.10f,   // truncationDist:  10cm (≈3× voxel size)
+                0.10f,   // carvingDist:     10cm
+                true,    // enableCarving
+                16,      // chunkSizeVoxels
+                0        // threadCount: auto-detect
+            );
             LOGI("[TSDF] Initialized ChiselManager on first depth frame (%dx%d)", arDepthWidth, arDepthHeight);
         }
 
