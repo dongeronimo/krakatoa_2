@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22.1)
 
 project("krakatoa")
-set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_BUILD_TYPE RelWithDebInfo)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -240,6 +240,7 @@ target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
         -fexceptions
         -frtti
         $<$<CONFIG:Debug>:-O0 -g>
+        $<$<CONFIG:RelWithDebInfo>:-O2 -g -DNDEBUG>
         $<$<CONFIG:Release>:-O3 -DNDEBUG>
 )
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
