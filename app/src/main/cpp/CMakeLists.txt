@@ -117,26 +117,8 @@ if(NOT EXISTS ${ARCORE_INCLUDE_DIR})
     message(WARNING "ARCore headers not found at ${ARCORE_INCLUDE_DIR}")
 endif()
 
-# chisel_bridge — thin wrapper around OpenChisel, compiled at -O2 even in
-# Debug builds.  OpenChisel's ProjectionIntegrator::Integrate is a header
-# template; it inherits the caller's optimisation level.  Compiling the
-# wrapper at -O0 makes Eigen 50-100× slower (no inlining, no NEON).
-# Isolating it in its own static lib keeps the rest of the project debuggable.
-add_library(chisel_bridge STATIC
-        chisel_manager.cpp
-)
-target_include_directories(chisel_bridge PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-)
-target_include_directories(chisel_bridge SYSTEM PRIVATE
-        ${open_chisel_SOURCE_DIR}/open_chisel/include
-        ${eigen_SOURCE_DIR}
-)
-target_link_libraries(chisel_bridge PRIVATE
-        open_chisel
-        ${log-lib}
-)
-target_compile_options(chisel_bridge PRIVATE -O2 -g -DNDEBUG -Wno-error)
+# chisel_bridge — optimized OpenChisel wrapper (own CMakeLists.txt)
+add_subdirectory(chisel_bridge)
 
 # Main library
 add_library(${CMAKE_PROJECT_NAME} SHARED
@@ -215,8 +197,6 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         tsdf_volume.h
         tsdf_fusion_op.cpp
         tsdf_fusion_op.h
-        thread_event.h
-        chisel_manager.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore

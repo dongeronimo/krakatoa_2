@@ -39,7 +39,7 @@
 #include "marching_cubes_op.h"
 #include "tsdf_volume.h"
 #include "tsdf_fusion_op.h"
-#include "chisel_manager.h"
+#include "chisel_bridge/chisel_manager.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
