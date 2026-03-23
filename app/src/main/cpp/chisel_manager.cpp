@@ -43,6 +43,7 @@ namespace reconstruction {
         // Set up the projection integrator with pre-computed voxel centroids.
         // The centroids are the 3D positions of each voxel center within a canonical chunk.
         // Without these, the integrator's inner loop is empty and no voxels get updated.
+        truncation_ = truncationDist;
         auto truncator = std::make_shared<chisel::ConstantTruncator>(truncationDist);
         auto weighter = std::make_shared<chisel::ConstantWeighter>(1.0f);
 
@@ -151,11 +152,26 @@ namespace reconstruction {
         constexpr float kFarPlane = 3.5f;
         auto depthImage = std::make_shared<chisel::DepthImage<float>>(input.width, input.height);
         float* depthPtr = depthImage->GetMutableData();
+        float maxObservedDepth = 0.0f;
         for (int i = 0; i < input.width * input.height; i++) {
             uint16_t raw = input.depthData[i];
             float d = (raw == 0) ? 0.0f : static_cast<float>(raw) / 1000.0f;
-            depthPtr[i] = (d >= kNearPlane && d <= kFarPlane) ? d : 0.0f;
+            if (d >= kNearPlane && d <= kFarPlane) {
+                depthPtr[i] = d;
+                if (d > maxObservedDepth) maxObservedDepth = d;
+            } else {
+                depthPtr[i] = 0.0f;
+            }
         }
+
+        // Clamp the far plane to just beyond the actual observed depth.
+        // This is critical for performance: OpenChisel creates chunks for the
+        // entire camera frustum. With far=3.5m the frustum can span ~12k chunks,
+        // but actual depth is often <1m. Adding the truncation distance ensures
+        // voxels at the surface boundary are still updated.
+        float effectiveFar = (maxObservedDepth > 0.0f)
+            ? std::min(kFarPlane, maxObservedDepth + truncation_)
+            : kNearPlane;  // no valid depth → skip creating any chunks
 
         // Set up camera intrinsics
         chisel::PinholeCamera camera;
@@ -168,7 +184,7 @@ namespace reconstruction {
         camera.SetWidth(input.width);
         camera.SetHeight(input.height);
         camera.SetNearPlane(kNearPlane);
-        camera.SetFarPlane(kFarPlane);
+        camera.SetFarPlane(effectiveFar);
 
         // Convert view matrix (world→camera, column-major) to camera pose (camera→world).
         // ARCore uses OpenGL convention (forward = -Z, up = +Y).
@@ -249,18 +265,20 @@ namespace reconstruction {
             uint32_t numVerts = static_cast<uint32_t>(meshOut.vertices.size() / 8);
             uint32_t numTris = static_cast<uint32_t>(meshOut.indices.size() / 3);
             Eigen::Vector3f cp = cameraPose.translation();
-            LOGI("[TSDF] frame %d MESH — %zu chunks (%zu→%zu), %u verts, %u tris | integrate=%ldms mesh=%ldms consolidate=%ldms | cam=(%.2f,%.2f,%.2f)",
+            LOGI("[TSDF] frame %d MESH — %zu chunks (%zu→%zu), %u verts, %u tris | integrate=%ldms mesh=%ldms consolidate=%ldms | far=%.2f | cam=(%.2f,%.2f,%.2f)",
                  frameCount, numChunks, chunksBefore, chunksAfter, numVerts, numTris,
                  integrateMs, meshMs, consolidateMs,
+                 effectiveFar,
                  cp.x(), cp.y(), cp.z());
         } else {
             // Log every integration so we can see if the worker is alive
             size_t numChunks = chisel_->GetChunkManager().GetChunks().size();
             Eigen::Vector3f cp = cameraPose.translation();
-            LOGI("[TSDF] frame %d (%d/%d) — %zu chunks (%zu→%zu) | integrate=%ldms | cam=(%.2f,%.2f,%.2f)",
+            LOGI("[TSDF] frame %d (%d/%d) — %zu chunks (%zu→%zu) | integrate=%ldms | far=%.2f | cam=(%.2f,%.2f,%.2f)",
                  frameCount, integrationsSinceMesh_, MESH_EVERY_N_INTEGRATIONS,
                  numChunks, chunksBefore, chunksAfter,
                  integrateMs,
+                 effectiveFar,
                  cp.x(), cp.y(), cp.z());
         }
     }
