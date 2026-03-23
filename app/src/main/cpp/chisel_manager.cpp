@@ -102,7 +102,7 @@ namespace reconstruction {
     void ChiselManager::WorkerLoop() {
         LOGI("ChiselManager: worker thread started");
         while (running_) {
-            // Wait for notification
+            // Wait for a signal from the render thread
             {
                 std::unique_lock<std::mutex> lock(cvMutex_);
                 cv_.wait(lock, [this]() {
@@ -112,29 +112,26 @@ namespace reconstruction {
             if (!running_) break;
 
             // Drain all pending events — we only care about the latest frame
-            bool shouldIntegrate = false;
             bool shouldReset = false;
             toWorker_.Drain([&](const threading::Event& e) {
-                if (e.id == EVT_INTEGRATE_FRAME) shouldIntegrate = true;
                 if (e.id == EVT_RESET_VOLUME) shouldReset = true;
             });
 
             if (shouldReset && chisel_) {
                 chisel_->Reset();
+                integrationsSinceMesh_ = 0;
                 LOGI("ChiselManager: volume reset");
             }
 
-            if (shouldIntegrate) {
-                // Grab the latest input
-                FrameInput input;
-                {
-                    std::lock_guard<std::mutex> lock(inputMutex_);
-                    if (!hasNewInput_) continue;
-                    input = std::move(latestInput_);
-                    hasNewInput_ = false;
-                }
-                ProcessFrame(input);
+            // Grab the latest input and process it
+            FrameInput input;
+            {
+                std::lock_guard<std::mutex> lock(inputMutex_);
+                if (!hasNewInput_) continue;
+                input = std::move(latestInput_);
+                hasNewInput_ = false;
             }
+            ProcessFrame(input);
         }
         LOGI("ChiselManager: worker thread stopped");
     }
@@ -187,7 +184,7 @@ namespace reconstruction {
 
         size_t chunksBefore = chisel_->GetChunkManager().GetChunks().size();
 
-        // Integrate
+        // ── TSDF integration (fast — runs every frame) ──────────────────
         chisel_->IntegrateDepthScan<float>(integrator_,
                                            depthImage,
                                            cameraPose,
@@ -199,41 +196,57 @@ namespace reconstruction {
         Eigen::Vector3f camPos = cameraPose.translation();
         PruneDistantChunks(camPos);
 
-        // Update meshes for dirty chunks
-        chisel_->UpdateMeshes();
-
-        // Consolidate all chunk meshes into a single buffer and post to render thread
-        MeshOutput meshOut;
-        ConsolidateChunkMeshes(meshOut);
-
-        if (!meshOut.indices.empty()) {
-            // Serialize: [vertexFloats(u32), indexCount(u32), vertex data, index data]
-            uint32_t vertexFloats = static_cast<uint32_t>(meshOut.vertices.size());
-            uint32_t indexCount = static_cast<uint32_t>(meshOut.indices.size());
-            size_t totalSize = 2 * sizeof(uint32_t)
-                             + vertexFloats * sizeof(float)
-                             + indexCount * sizeof(uint32_t);
-
-            std::vector<uint8_t> payload(totalSize);
-            uint8_t* ptr = payload.data();
-            memcpy(ptr, &vertexFloats, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-            memcpy(ptr, &indexCount, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-            memcpy(ptr, meshOut.vertices.data(), vertexFloats * sizeof(float)); ptr += vertexFloats * sizeof(float);
-            memcpy(ptr, meshOut.indices.data(), indexCount * sizeof(uint32_t));
-
-            toRender_.Post(EVT_MESH_READY, payload.data(), payload.size());
-        }
+        integrationsSinceMesh_++;
 
         static int frameCount = 0;
         frameCount++;
-        if (frameCount <= 5 || frameCount % 30 == 0) {
-            size_t numMeshes = chisel_->GetChunkManager().GetAllMeshes().size();
+
+        // ── Mesh extraction (expensive — only every N integrations) ─────
+        // Marching cubes + consolidation is the bottleneck. By batching N
+        // integrations before meshing, the worker processes frames faster
+        // and carving gets more iterations to actually clear geometry.
+        if (integrationsSinceMesh_ >= MESH_EVERY_N_INTEGRATIONS) {
+            integrationsSinceMesh_ = 0;
+
+            chisel_->UpdateMeshes();
+
+            MeshOutput meshOut;
+            ConsolidateChunkMeshes(meshOut);
+
+            if (!meshOut.indices.empty()) {
+                // Serialize: [vertexFloats(u32), indexCount(u32), vertex data, index data]
+                uint32_t vertexFloats = static_cast<uint32_t>(meshOut.vertices.size());
+                uint32_t indexCount = static_cast<uint32_t>(meshOut.indices.size());
+                size_t totalSize = 2 * sizeof(uint32_t)
+                                 + vertexFloats * sizeof(float)
+                                 + indexCount * sizeof(uint32_t);
+
+                std::vector<uint8_t> payload(totalSize);
+                uint8_t* ptr = payload.data();
+                memcpy(ptr, &vertexFloats, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+                memcpy(ptr, &indexCount, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+                memcpy(ptr, meshOut.vertices.data(), vertexFloats * sizeof(float)); ptr += vertexFloats * sizeof(float);
+                memcpy(ptr, meshOut.indices.data(), indexCount * sizeof(uint32_t));
+
+                toRender_.Post(EVT_MESH_READY, payload.data(), payload.size());
+            }
+
+            if (frameCount <= 5 || frameCount % 30 == 0) {
+                size_t numMeshes = chisel_->GetChunkManager().GetAllMeshes().size();
+                size_t numChunks = chisel_->GetChunkManager().GetChunks().size();
+                uint32_t numVerts = static_cast<uint32_t>(meshOut.vertices.size() / 8);
+                uint32_t numTris = static_cast<uint32_t>(meshOut.indices.size() / 3);
+                Eigen::Vector3f cp = cameraPose.translation();
+                LOGI("[TSDF] frame %d — %zu chunks (%zu before integ → %zu after), %zu meshes, %u verts, %u tris | cam=(%.2f,%.2f,%.2f)",
+                     frameCount, numChunks, chunksBefore, chunksAfter, numMeshes, numVerts, numTris,
+                     cp.x(), cp.y(), cp.z());
+            }
+        } else if (frameCount <= 5 || frameCount % 30 == 0) {
             size_t numChunks = chisel_->GetChunkManager().GetChunks().size();
-            uint32_t numVerts = static_cast<uint32_t>(meshOut.vertices.size() / 8);
-            uint32_t numTris = static_cast<uint32_t>(meshOut.indices.size() / 3);
             Eigen::Vector3f cp = cameraPose.translation();
-            LOGI("[TSDF] frame %d — %zu chunks (%zu before integ → %zu after), %zu meshes, %u verts, %u tris | cam=(%.2f,%.2f,%.2f)",
-                 frameCount, numChunks, chunksBefore, chunksAfter, numMeshes, numVerts, numTris,
+            LOGI("[TSDF] frame %d (integrate only, %d/%d) — %zu chunks (%zu→%zu) | cam=(%.2f,%.2f,%.2f)",
+                 frameCount, integrationsSinceMesh_, MESH_EVERY_N_INTEGRATIONS,
+                 numChunks, chunksBefore, chunksAfter,
                  cp.x(), cp.y(), cp.z());
         }
     }

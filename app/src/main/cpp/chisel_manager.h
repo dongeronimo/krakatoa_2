@@ -94,6 +94,13 @@ namespace reconstruction {
 
         static constexpr size_t MAX_CHUNKS = 2000;
 
+        /// How many TSDF integrations to run before extracting a new mesh.
+        /// Lower = more responsive visuals but slower integration throughput.
+        /// Higher = faster convergence & carving but choppier mesh updates.
+        static constexpr int MESH_EVERY_N_INTEGRATIONS = 5;
+
+        int integrationsSinceMesh_ = 0;
+
         void WorkerLoop();
         void ProcessFrame(const FrameInput& input);
         void PruneDistantChunks(const Eigen::Vector3f& cameraPos);
