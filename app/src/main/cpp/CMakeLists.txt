@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22.1)
 
 project("krakatoa")
-set(CMAKE_BUILD_TYPE RelWithDebInfo)
+set(CMAKE_BUILD_TYPE Debug)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -103,7 +103,7 @@ target_compile_options(open_chisel PRIVATE -O2 -DNDEBUG -Wno-error)
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
 
-# Find Android libraries
+# Find Android libraries (must come before chisel_bridge which uses ${log-lib})
 find_library(log-lib log REQUIRED)
 find_library(android-lib android REQUIRED)
 find_library(vulkan-lib vulkan REQUIRED)
@@ -116,6 +116,27 @@ set(ARCORE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third-party.arcore.include)
 if(NOT EXISTS ${ARCORE_INCLUDE_DIR})
     message(WARNING "ARCore headers not found at ${ARCORE_INCLUDE_DIR}")
 endif()
+
+# chisel_bridge — thin wrapper around OpenChisel, compiled at -O2 even in
+# Debug builds.  OpenChisel's ProjectionIntegrator::Integrate is a header
+# template; it inherits the caller's optimisation level.  Compiling the
+# wrapper at -O0 makes Eigen 50-100× slower (no inlining, no NEON).
+# Isolating it in its own static lib keeps the rest of the project debuggable.
+add_library(chisel_bridge STATIC
+        chisel_manager.cpp
+)
+target_include_directories(chisel_bridge PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_include_directories(chisel_bridge SYSTEM PRIVATE
+        ${open_chisel_SOURCE_DIR}/open_chisel/include
+        ${eigen_SOURCE_DIR}
+)
+target_link_libraries(chisel_bridge PRIVATE
+        open_chisel
+        ${log-lib}
+)
+target_compile_options(chisel_bridge PRIVATE -O2 -g -DNDEBUG -Wno-error)
 
 # Main library
 add_library(${CMAKE_PROJECT_NAME} SHARED
@@ -196,7 +217,6 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         tsdf_fusion_op.h
         thread_event.h
         chisel_manager.h
-        chisel_manager.cpp
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
@@ -216,6 +236,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         nlohmann_json::nlohmann_json
         assimp::assimp
         glm::glm
+        chisel_bridge
         open_chisel
         EGL
         GLESv3
@@ -240,7 +261,6 @@ target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
         -fexceptions
         -frtti
         $<$<CONFIG:Debug>:-O0 -g>
-        $<$<CONFIG:RelWithDebInfo>:-O2 -g -DNDEBUG>
         $<$<CONFIG:Release>:-O3 -DNDEBUG>
 )
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
