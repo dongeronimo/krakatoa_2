@@ -44,7 +44,7 @@ The ratio of truncation distance to voxel size matters:
 | Too large (20x) | Distance field is smeared, losing sharp detail |
 | Sweet spot (3-5x) | Absorbs sensor noise while preserving surface detail |
 
-In Krakatoa, with **1cm voxels** and **4cm truncation**, we update voxels within +/-4cm of each depth reading.
+In Krakatoa, with **1cm voxels** and **3cm truncation**, we update voxels within +/-3cm of each depth reading.
 
 ## Volumetric Fusion
 

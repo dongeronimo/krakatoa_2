@@ -76,7 +76,7 @@ When the chunk manager is created, it pre-computes the **centroids** — the 3D 
 
 ### `ConstantTruncator`
 - Returns a fixed truncation distance for all voxels
-- Krakatoa uses 4cm (0.04m)
+- Krakatoa uses 3cm (0.03m)
 
 ### `ConstantWeighter`
 - Returns a fixed weight (1.0) for all observations

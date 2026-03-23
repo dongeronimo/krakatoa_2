@@ -81,9 +81,15 @@ Krakatoa is an Android AR application that performs real-time 3D reconstruction 
 - **MutableMesh**: Ring-buffered CPU→GPU streaming mesh (used for reconstruction output)
 - **GpuMesh**: Compute shader-generated mesh with atomic counters (GPU compute path, kept for reference)
 
-### TSDF Reconstruction (`chisel_manager.h/cpp`)
+### TSDF Reconstruction (`chisel_bridge/chisel_manager.h/cpp`)
 
-The active reconstruction path uses OpenChisel on a dedicated worker thread:
+The active reconstruction path uses OpenChisel on a dedicated worker thread.
+The chisel bridge lives in its own subdirectory (`chisel_bridge/`) with a
+dedicated CMakeLists.txt compiled at -O3 with aggressive optimizations
+(-ffast-math, -funroll-loops, -ftree-vectorize, -ffp-contract=fast,
+-fomit-frame-pointer). This is critical because OpenChisel's
+ProjectionIntegrator::Integrate is a header template — at -O0 the Eigen
+inner loop is 50-100x slower.
 
 ```
 Render Thread                          Worker Thread
@@ -108,7 +114,13 @@ PollMesh():                            │   ├─ Convert pose (GL→CV)
 
 **Latest-wins design**: If the worker is still busy when a new frame arrives, the old queued frame is silently overwritten. This prevents queue buildup and keeps the reconstruction responsive.
 
-**Chunk pruning**: When chunk count exceeds `MAX_CHUNKS` (2000), the farthest chunks from the camera are removed to bound memory usage.
+**Chunk pruning**: When chunk count exceeds `MAX_CHUNKS` (8000), the farthest chunks from the camera are removed to bound memory usage.
+
+**Known limitation — OOM on room-scale scans**: The current architecture sends
+ALL chunk meshes to the GPU every mesh frame via `ConsolidateChunkMeshes()`.
+At 1cm voxels, scanning a full room quickly exhausts both CPU RAM (OpenChisel
+stores all chunks in memory) and GPU memory (single consolidated buffer grows
+unbounded). See `docs/ChunkPagingProposal.md` for the planned fix.
 
 ### GPU Compute Path (Reference)
 
@@ -147,6 +159,7 @@ Each frame in `nativeOnDrawFrame()`:
 
 - **Gradle** (`app/build.gradle.kts`): Android build, min API 33, arm64-v8a only
 - **CMake** (`app/src/main/cpp/CMakeLists.txt`): C++17, fetches dependencies via FetchContent
+- **chisel_bridge** (`app/src/main/cpp/chisel_bridge/CMakeLists.txt`): Separate static lib, -O3 always
 - **Dependencies**: GLM, nlohmann/json, Assimp, Eigen, OpenChisel, VMA
 - **Shader compilation**: GLSL → SPIR-V via `glslc` (invoked from CMake)
 
@@ -155,11 +168,11 @@ Each frame in `nativeOnDrawFrame()`:
 | Constant | Value | Location |
 |----------|-------|----------|
 | MAX_FRAMES_IN_FLIGHT | 3 | ring_buffer.h |
-| Voxel resolution | 1cm (0.01m) | chisel_manager.cpp |
-| Truncation distance | 4cm (0.04m) | chisel_manager.cpp |
-| Chunk size | 16x16x16 voxels | chisel_manager.cpp |
-| Max chunks | 2000 | chisel_manager.h |
-| Max mesh vertices | 500,000 | native-lib.cpp |
-| Max mesh indices | 1,500,000 | native-lib.cpp |
-| Depth near plane | 0.1m | chisel_manager.cpp |
-| Depth far plane | 3.5m | chisel_manager.cpp |
+| Voxel resolution | 1cm (0.01m) | native-lib.cpp (Initialize call) |
+| Truncation distance | 3cm (0.03m) | native-lib.cpp (Initialize call) |
+| Carving distance | 3cm (0.03m) | native-lib.cpp (Initialize call) |
+| Chunk size | 16x16x16 voxels | native-lib.cpp (Initialize call) |
+| Max chunks | 8000 | chisel_bridge/chisel_manager.h |
+| Max mesh vertices | 2,000,000 | CMakeLists.txt (WORLD_MESH_MAX_VERTICES) |
+| Max mesh indices | 6,000,000 | CMakeLists.txt (WORLD_MESH_MAX_INDICES) |
+| Depth far plane | 1.5m | chisel_bridge/chisel_manager.cpp |
