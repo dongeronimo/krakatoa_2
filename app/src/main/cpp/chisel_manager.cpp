@@ -146,10 +146,12 @@ namespace reconstruction {
         }
 
         // Build the depth image (convert uint16 mm → float meters)
-        // Clamp to [nearPlane, farPlane] — values outside this range are invalid
-        // and would cause IntegrateDepthScan to create a huge frustum, leading to OOM.
+        // kFarPlane caps the maximum integration depth. OpenChisel internally
+        // builds its frustum from the actual min/max depth in the image (via
+        // GetStats), so this cap directly controls frustum size.
+        // At 1cm voxels, 1.5m gives ~600 frustum chunks vs ~2000 at 3.5m.
         constexpr float kNearPlane = 0.1f;
-        constexpr float kFarPlane = 3.5f;
+        constexpr float kFarPlane = 1.5f;
         auto depthImage = std::make_shared<chisel::DepthImage<float>>(input.width, input.height);
         float* depthPtr = depthImage->GetMutableData();
         float maxObservedDepth = 0.0f;
@@ -164,14 +166,8 @@ namespace reconstruction {
             }
         }
 
-        // Clamp the far plane to just beyond the actual observed depth.
-        // This is critical for performance: OpenChisel creates chunks for the
-        // entire camera frustum. With far=3.5m the frustum can span ~12k chunks,
-        // but actual depth is often <1m. Adding the truncation distance ensures
-        // voxels at the surface boundary are still updated.
         float effectiveFar = (maxObservedDepth > 0.0f)
-            ? std::min(kFarPlane, maxObservedDepth + truncation_)
-            : kNearPlane;  // no valid depth → skip creating any chunks
+            ? maxObservedDepth : kNearPlane;
 
         // Set up camera intrinsics
         chisel::PinholeCamera camera;
