@@ -1,6 +1,7 @@
 #include "chisel_manager.h"
 #include "android_log.h"
 #include <algorithm>
+#include <chrono>
 #include <Eigen/Dense>
 
 namespace reconstruction {
@@ -184,11 +185,15 @@ namespace reconstruction {
 
         size_t chunksBefore = chisel_->GetChunkManager().GetChunks().size();
 
-        // ── TSDF integration (fast — runs every frame) ──────────────────
+        // ── TSDF integration (runs every frame) ─────────────────────────
+        auto t0 = std::chrono::steady_clock::now();
+
         chisel_->IntegrateDepthScan<float>(integrator_,
                                            depthImage,
                                            cameraPose,
                                            camera);
+
+        auto t1 = std::chrono::steady_clock::now();
 
         size_t chunksAfter = chisel_->GetChunkManager().GetChunks().size();
 
@@ -201,6 +206,8 @@ namespace reconstruction {
         static int frameCount = 0;
         frameCount++;
 
+        long integrateMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
         // ── Mesh extraction (expensive — only every N integrations) ─────
         // Marching cubes + consolidation is the bottleneck. By batching N
         // integrations before meshing, the worker processes frames faster
@@ -208,10 +215,16 @@ namespace reconstruction {
         if (integrationsSinceMesh_ >= MESH_EVERY_N_INTEGRATIONS) {
             integrationsSinceMesh_ = 0;
 
+            auto t2 = std::chrono::steady_clock::now();
             chisel_->UpdateMeshes();
+            auto t3 = std::chrono::steady_clock::now();
 
             MeshOutput meshOut;
             ConsolidateChunkMeshes(meshOut);
+            auto t4 = std::chrono::steady_clock::now();
+
+            long meshMs = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+            long consolidateMs = std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count();
 
             if (!meshOut.indices.empty()) {
                 // Serialize: [vertexFloats(u32), indexCount(u32), vertex data, index data]
@@ -231,22 +244,23 @@ namespace reconstruction {
                 toRender_.Post(EVT_MESH_READY, payload.data(), payload.size());
             }
 
-            if (frameCount <= 5 || frameCount % 30 == 0) {
-                size_t numMeshes = chisel_->GetChunkManager().GetAllMeshes().size();
-                size_t numChunks = chisel_->GetChunkManager().GetChunks().size();
-                uint32_t numVerts = static_cast<uint32_t>(meshOut.vertices.size() / 8);
-                uint32_t numTris = static_cast<uint32_t>(meshOut.indices.size() / 3);
-                Eigen::Vector3f cp = cameraPose.translation();
-                LOGI("[TSDF] frame %d — %zu chunks (%zu before integ → %zu after), %zu meshes, %u verts, %u tris | cam=(%.2f,%.2f,%.2f)",
-                     frameCount, numChunks, chunksBefore, chunksAfter, numMeshes, numVerts, numTris,
-                     cp.x(), cp.y(), cp.z());
-            }
-        } else if (frameCount <= 5 || frameCount % 30 == 0) {
+            // Always log mesh extraction — this is the critical event
+            size_t numChunks = chisel_->GetChunkManager().GetChunks().size();
+            uint32_t numVerts = static_cast<uint32_t>(meshOut.vertices.size() / 8);
+            uint32_t numTris = static_cast<uint32_t>(meshOut.indices.size() / 3);
+            Eigen::Vector3f cp = cameraPose.translation();
+            LOGI("[TSDF] frame %d MESH — %zu chunks (%zu→%zu), %u verts, %u tris | integrate=%ldms mesh=%ldms consolidate=%ldms | cam=(%.2f,%.2f,%.2f)",
+                 frameCount, numChunks, chunksBefore, chunksAfter, numVerts, numTris,
+                 integrateMs, meshMs, consolidateMs,
+                 cp.x(), cp.y(), cp.z());
+        } else {
+            // Log every integration so we can see if the worker is alive
             size_t numChunks = chisel_->GetChunkManager().GetChunks().size();
             Eigen::Vector3f cp = cameraPose.translation();
-            LOGI("[TSDF] frame %d (integrate only, %d/%d) — %zu chunks (%zu→%zu) | cam=(%.2f,%.2f,%.2f)",
+            LOGI("[TSDF] frame %d (%d/%d) — %zu chunks (%zu→%zu) | integrate=%ldms | cam=(%.2f,%.2f,%.2f)",
                  frameCount, integrationsSinceMesh_, MESH_EVERY_N_INTEGRATIONS,
                  numChunks, chunksBefore, chunksAfter,
+                 integrateMs,
                  cp.x(), cp.y(), cp.z());
         }
     }
