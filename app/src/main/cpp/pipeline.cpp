@@ -491,6 +491,154 @@ PipelineConfig graphics::TransparentPhongConfig(Texture2D* texture,
 }
 
 // ============================================================
+// Opaque Phong (fixed material color, no texture)
+// ============================================================
+
+struct OpaquePhongUniformBuffer {
+    float model[16];
+    float view[16];
+    float projection[16];
+    float normalMatrix[16]; // inverse-transpose of model
+    float lightDir[4];      // xyz = direction (world space), w = pad
+    float lightColor[4];    // rgb = color, a = intensity
+    float ambientColor[4];  // rgb = ambient, a = pad
+    float materialColor[4]; // rgb = fixed color, a = pad
+};
+
+PipelineConfig graphics::OpaquePhongConfig(glm::vec3 color) {
+    PipelineConfig config;
+    config.vertexShader   = "opaque_phong.vert";
+    config.fragmentShader = "opaque_phong.frag";
+
+    // Opaque pass: depth test + write
+    config.depthTestEnable  = true;
+    config.depthWriteEnable = true;
+
+    // No blending
+    config.blendEnable = false;
+
+    // The offscreen pass uses ARCore's OpenGL projection matrix (Y-up)
+    // without a Y-flip — the compose pass handles it via UV flip instead.
+    // This reverses apparent winding in Vulkan's rasterizer: originally-CCW
+    // triangles appear CW.  Tell the rasterizer that CW = front so that:
+    //   1. Backface culling removes actual back faces (not front ones)
+    //   2. gl_FrontFacing is correct for front-facing geometry
+    //   3. The normal flip (if !gl_FrontFacing N = -N) fires on true back faces only
+    config.cullMode  = VK_CULL_MODE_BACK_BIT;
+    config.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
+    // Only UBO descriptor (no texture sampler)
+    config.descriptorPoolSizes = {
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_DESCRIPTOR_SETS_PER_POOL}
+    };
+
+    // Capture material color as vec4
+    glm::vec4 matColor(color, 1.0f);
+
+    config.renderCallback = [matColor](VkCommandBuffer cmd, RDO* rdo, Renderable* obj,
+                                       Pipeline& pipeline, uint32_t frameIndex) {
+        // -- First-time init: create UBO buffers and descriptor sets --
+        std::shared_ptr<UniformBuffer> uniformBuffer = pipeline.GetUniformBuffer(obj->GetId());
+        if (uniformBuffer == nullptr) {
+            auto ub = std::make_shared<UniformBuffer>();
+            createGpuUniformBuffers<OpaquePhongUniformBuffer>(
+                    pipeline.GetAllocator(), MAX_FRAMES_IN_FLIGHT,
+                    ub->gpuBuffer, ub->gpuBufferAllocation, ub->mappedData);
+            ub->size = sizeof(OpaquePhongUniformBuffer);
+            ub->id   = obj->GetId();
+            ub->deathCounter = 100;
+
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                VkDescriptorSet& ds = ub->descriptorSets.Next();
+                ds = pipeline.AllocateDescriptorSet();
+
+                // Binding 0: UBO
+                VkDescriptorBufferInfo bufInfo{};
+                bufInfo.buffer = ub->gpuBuffer[i];
+                bufInfo.offset = 0;
+                bufInfo.range  = sizeof(OpaquePhongUniformBuffer);
+
+                VkWriteDescriptorSet write{};
+                write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet          = ds;
+                write.dstBinding      = 0;
+                write.descriptorCount = 1;
+                write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                write.pBufferInfo     = &bufInfo;
+
+                vkUpdateDescriptorSets(pipeline.GetDevice(), 1, &write, 0, nullptr);
+            }
+            pipeline.AddUniformBuffer(obj->GetId(), ub);
+
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                debug::SetBufferName(pipeline.GetDevice(), ub->gpuBuffer[i],
+                                     Concatenate("OpaquePhongUBO[", i, "]"));
+                debug::SetDescriptorSetName(pipeline.GetDevice(), ub->descriptorSets[i],
+                                            Concatenate("OpaquePhongDescSet[", i, "]"));
+            }
+            uniformBuffer = ub;
+        }
+
+        // -- Check if mesh has valid data before touching the command buffer --
+        Mesh* mesh = obj->GetMesh();
+        VkBuffer indirectBuf = mesh ? mesh->GetIndirectDrawBuffer() : VK_NULL_HANDLE;
+        bool canDraw = mesh
+                       && mesh->GetVertexBuffer() != VK_NULL_HANDLE
+                       && (indirectBuf != VK_NULL_HANDLE || mesh->GetIndexCount() > 0);
+
+        if (canDraw) {
+            // Fill UBO with matrices, lighting, and material color
+            glm::mat4 model = rdo->GetMat4(RDO::MODEL_MAT);
+            glm::mat4 view  = rdo->GetMat4(RDO::VIEW_MAT);
+            glm::mat4 proj  = rdo->GetMat4(RDO::PROJ_MAT);
+            glm::mat4 normalMat = glm::transpose(glm::inverse(model));
+            glm::vec4 lightDir    = rdo->GetVec4(RDO::LIGHT_DIR);
+            glm::vec4 lightColor  = rdo->GetVec4(RDO::LIGHT_COLOR);
+            glm::vec4 ambientColor = rdo->GetVec4(RDO::AMBIENT_COLOR);
+
+            OpaquePhongUniformBuffer data{};
+            memcpy(data.model,        glm::value_ptr(model),      sizeof(float) * 16);
+            memcpy(data.view,         glm::value_ptr(view),       sizeof(float) * 16);
+            memcpy(data.projection,   glm::value_ptr(proj),       sizeof(float) * 16);
+            memcpy(data.normalMatrix, glm::value_ptr(normalMat),  sizeof(float) * 16);
+            memcpy(data.lightDir,     glm::value_ptr(lightDir),   sizeof(float) * 4);
+            memcpy(data.lightColor,   glm::value_ptr(lightColor), sizeof(float) * 4);
+            memcpy(data.ambientColor, glm::value_ptr(ambientColor), sizeof(float) * 4);
+            memcpy(data.materialColor, glm::value_ptr(matColor),  sizeof(float) * 4);
+
+            memcpy(uniformBuffer->mappedData.Current(), &data, sizeof(data));
+            vmaFlushAllocation(pipeline.GetAllocator(),
+                               uniformBuffer->gpuBufferAllocation.Current(),
+                               0, sizeof(data));
+
+            // Bind descriptor set, vertex/index buffers and draw
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipeline.GetPipelineLayout(), 0, 1,
+                                    &uniformBuffer->descriptorSets.Current(), 0, nullptr);
+
+            VkBuffer vertexBuffers[] = {mesh->GetVertexBuffer()};
+            VkDeviceSize offsets[] = {0};
+            vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(cmd, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+            if (indirectBuf != VK_NULL_HANDLE) {
+                vkCmdDrawIndexedIndirect(cmd, indirectBuf, 0, 1, sizeof(VkDrawIndexedIndirectCommand));
+            } else {
+                vkCmdDrawIndexed(cmd, mesh->GetIndexCount(), 1, 0, 0, 0);
+            }
+        }
+
+        // ALWAYS advance ring buffers and keep-alive, even when not drawing.
+        uniformBuffer->deathCounter++;
+        uniformBuffer->gpuBuffer.Next();
+        uniformBuffer->gpuBufferAllocation.Next();
+        uniformBuffer->mappedData.Next();
+        uniformBuffer->descriptorSets.Next();
+    };
+
+    return config;
+}
+
+// ============================================================
 // Compose (offscreen → swapchain)
 // ============================================================
 

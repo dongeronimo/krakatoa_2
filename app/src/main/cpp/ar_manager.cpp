@@ -53,6 +53,10 @@ namespace ar {
         // Enable plane detection (default is DISABLED in a fresh ArConfig)
         m_loader.ArConfig_setPlaneFindingMode(m_session, m_config,
                                               AR_PLANE_FINDING_MODE_HORIZONTAL_AND_VERTICAL);
+        // TEMPORARY: turn on flash/torch so AR works in dark rooms
+        if (m_loader.ArConfig_setFlashMode) {
+            m_loader.ArConfig_setFlashMode(m_session, m_config, AR_FLASH_MODE_TORCH);
+        }
 
         LOGI("ARSessionManager::initialize - configuring session...");
         status = m_loader.ArSession_configure(m_session, m_config);
@@ -218,6 +222,45 @@ namespace ar {
         m_loader.ArFrame_acquireCamera(m_session, m_frame, &camera);
         m_loader.ArCamera_getViewMatrix(m_session, camera, outMatrix);
         m_loader.ArCamera_release(camera);
+    }
+
+    void ARSessionManager::getSensorViewMatrix(float* outMatrix) {
+        ArCamera* camera = nullptr;
+        m_loader.ArFrame_acquireCamera(m_session, m_frame, &camera);
+
+        // Get physical (sensor-oriented) camera pose as quaternion + translation
+        ArPose* pose = nullptr;
+        m_loader.ArPose_create(m_session, nullptr, &pose);
+        m_loader.ArCamera_getPose(m_session, camera, pose);
+
+        float raw[7]; // qx, qy, qz, qw, tx, ty, tz
+        m_loader.ArPose_getPoseRaw(m_session, pose, raw);
+
+        m_loader.ArPose_destroy(pose);
+        m_loader.ArCamera_release(camera);
+
+        // Convert quaternion (qx,qy,qz,qw) + translation to a 4x4 column-major
+        // camera-to-world matrix, then invert to get view matrix (world→camera).
+        const float qx = raw[0], qy = raw[1], qz = raw[2], qw = raw[3];
+        const float tx = raw[4], ty = raw[5], tz = raw[6];
+
+        // Rotation matrix from quaternion (column-major)
+        const float xx = qx*qx, yy = qy*qy, zz = qz*qz;
+        const float xy = qx*qy, xz = qx*qz, yz = qy*qz;
+        const float wx = qw*qx, wy = qw*qy, wz = qw*qz;
+
+        // Camera-to-world rotation (R) columns:
+        float R[9];
+        R[0] = 1 - 2*(yy+zz); R[3] = 2*(xy-wz);     R[6] = 2*(xz+wy);
+        R[1] = 2*(xy+wz);     R[4] = 1 - 2*(xx+zz);  R[7] = 2*(yz-wx);
+        R[2] = 2*(xz-wy);     R[5] = 2*(yz+wx);      R[8] = 1 - 2*(xx+yy);
+
+        // View matrix = inverse of pose = R^T | -R^T * t
+        // Column-major 4x4:
+        outMatrix[ 0] = R[0]; outMatrix[ 4] = R[1]; outMatrix[ 8] = R[2]; outMatrix[12] = -(R[0]*tx + R[1]*ty + R[2]*tz);
+        outMatrix[ 1] = R[3]; outMatrix[ 5] = R[4]; outMatrix[ 9] = R[5]; outMatrix[13] = -(R[3]*tx + R[4]*ty + R[5]*tz);
+        outMatrix[ 2] = R[6]; outMatrix[ 6] = R[7]; outMatrix[10] = R[8]; outMatrix[14] = -(R[6]*tx + R[7]*ty + R[8]*tz);
+        outMatrix[ 3] = 0;    outMatrix[ 7] = 0;    outMatrix[11] = 0;    outMatrix[15] = 1;
     }
 
     void ARSessionManager::queryAvailableResolutions() {
@@ -450,6 +493,9 @@ namespace ar {
             m_loader.ArTrackable_release(trackable);
         }
     }
+    /// Acquires the current depth image from ARCore.
+    /// Returns nullptr if depth is not available (e.g. not tracking, no ToF sensor ready).
+    /// Caller must release the returned ArImage via releaseDepthImage().
     ArImage* ARSessionManager::getDepthImage() {
         if (!m_isTracking) {
             return nullptr;
@@ -464,43 +510,68 @@ namespace ar {
         }
         return depthImage;
     }
+    /// Returns depth image dimensions in sensor (unrotated) coordinates.
+    /// Width is the sensor's horizontal extent, height is vertical.
     void ARSessionManager::getDepthImageDimensions(ArImage* image, int32_t& w, int32_t& h) {
         w = 0, h = 0;
         m_loader.ArImage_getWidth(m_session, image, &w);
         m_loader.ArImage_getHeight(m_session, image, &h);
     }
+    /// Extracts depth pixel data from an ArImage into a tightly-packed uint16 vector.
+    /// Each pixel is depth in millimeters. Row padding from the hardware buffer is stripped
+    /// so the output is exactly width*height elements, indexed as data[v * width + u].
     void ARSessionManager::getDepthImageData(ArImage* image, std::vector<uint16_t>& data, int32_t& stride) {
         const uint8_t* rawData = nullptr;
         int32_t dataLength = 0;
         m_loader.ArImage_getPlaneData(m_session, image, 0, &rawData, &dataLength);
         m_loader.ArImage_getPlaneRowStride(m_session, image, 0, &stride);
 
-        const uint16_t* depthMm = reinterpret_cast<const uint16_t*>(rawData);
-        data.assign(depthMm, depthMm + dataLength / sizeof(uint16_t));
+        int32_t w = 0, h = 0;
+        m_loader.ArImage_getWidth(m_session, image, &w);
+        m_loader.ArImage_getHeight(m_session, image, &h);
+
+        // Row stride may include padding beyond width*sizeof(uint16_t).
+        // Repack tightly so the GPU shader can index as v*width+u.
+        int32_t stridePixels = stride / static_cast<int32_t>(sizeof(uint16_t));
+        if (stridePixels == w) {
+            // No padding — fast path
+            const uint16_t* depthMm = reinterpret_cast<const uint16_t*>(rawData);
+            data.assign(depthMm, depthMm + w * h);
+        } else {
+            // Strip row padding
+            data.resize(w * h);
+            for (int32_t row = 0; row < h; ++row) {
+                const uint16_t* srcRow = reinterpret_cast<const uint16_t*>(rawData + row * stride);
+                std::copy(srcRow, srcRow + w, data.data() + row * w);
+            }
+        }
     }
     void ARSessionManager::releaseDepthImage(ArImage* image) {
         m_loader.ArImage_release(image);
     }
 
+    /// Returns the camera's pinhole intrinsics in sensor (unrotated) coordinates.
+    /// These are for the CPU image stream (not the GPU texture stream).
+    /// The returned (w, h) are the native image resolution — callers must scale
+    /// fx/fy/cx/cy if the depth image has a different resolution.
     void ARSessionManager::getCameraIntrinsics(ArDepthIntrinsics& out_intrinsics) {
-        //TODO deproject (done): get the camera
         ArCamera* camera;
         m_loader.ArFrame_acquireCamera(m_session, m_frame, &camera);
-        //TODO deproject (done): get the properties
+
         ArCameraIntrinsics* intrinsics;
         m_loader.ArCameraIntrinsics_create(m_session, &intrinsics);
         m_loader.ArCamera_getImageIntrinsics(m_session, camera, intrinsics);
+
         float out_fx, out_fy;
         float out_cx, out_cy;
         int32_t out_w, out_h;
         m_loader.ArCameraIntrinsics_getFocalLength(m_session, intrinsics, &out_fx, &out_fy);
         m_loader.ArCameraIntrinsics_getPrincipalPoint(m_session, intrinsics, &out_cx, &out_cy);
         m_loader.ArCameraIntrinsics_getImageDimensions(m_session, intrinsics, &out_w, &out_h);
-        //TODO deproject (done): release the intrinsics
+
         m_loader.ArCameraIntrinsics_destroy(intrinsics);
-        //TODO deproject (done): release the camera
         m_loader.ArCamera_release(camera);
-        //TODO deproject (done): return the values
+
         out_intrinsics.fx = out_fx;
         out_intrinsics.fy = out_fy;
         out_intrinsics.cx = out_cx;

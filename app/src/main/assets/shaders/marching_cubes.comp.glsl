@@ -1,13 +1,20 @@
 #version 450
-// Marching cubes compute shader.
-// Reads a 1024³ R8_UINT occupancy volume and generates triangle mesh output.
+// Marching cubes compute shader for TSDF volume.
+// Reads a 256³ R32_UINT TSDF volume and generates triangle mesh output.
 // Each thread processes one voxel cell (i,j,k) → (i+1,j+1,k+1).
+//
+// The TSDF volume stores packed uint32 values:
+//   bits [31:16] = TSDF distance (biased int16: [0,65535] maps to [-1,1])
+//   bits [15:0]  = weight (uint16)
+//
+// Surface is at the zero-crossing of the TSDF field.
+// Positive = free space, Negative = inside object.
 //
 // Vertex format: interleaved [px, py, pz, nx, ny, nz, u, v] (8 floats = 32 bytes)
 // to match the existing rendering pipeline.
 
-// binding 0: 3D volume texture (input, R8_UINT)
-layout(set = 0, binding = 0, r8ui) uniform readonly uimage3D volumeTexture;
+// binding 0: TSDF volume texture (input, R32_UINT)
+layout(set = 0, binding = 0, r32ui) uniform readonly uimage3D volumeTexture;
 
 // binding 1: edge table (256 ints)
 layout(set = 0, binding = 1) buffer EdgeTable {
@@ -36,36 +43,55 @@ layout(set = 0, binding = 5) buffer AtomicCounters {
 } counters;
 
 layout(push_constant) uniform PushConstants {
-    uint cutoff;       // occupancy threshold (e.g. 127)
-    float scale;       // voxel-to-world scale (inverse of voxelization scale)
-    float maxDistance;  // max edge length before discontinuity (in voxel units, e.g. 2.0)
-    uint volumeSize;   // e.g. 1024
-    uint maxVertices;  // output buffer capacity (vertices)
-    uint maxIndices;   // output buffer capacity (indices)
+    float scale;        // voxel-to-world scale (same as fusion scale, e.g. 200.0)
+    float maxDistance;   // max edge length before discontinuity (in voxel units, e.g. 2.0)
+    uint volumeSize;    // e.g. 256
+    uint maxVertices;   // output buffer capacity (vertices)
+    uint maxIndices;    // output buffer capacity (indices)
+    float minWeight;    // minimum weight to consider a voxel valid (e.g. 2.0)
 } pc;
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
-// Sample the volume at integer coordinates. Returns 0 if out of bounds.
-float sampleVolume(ivec3 p) {
-    if (any(lessThan(p, ivec3(0))) || any(greaterThanEqual(p, ivec3(pc.volumeSize))))
-        return 0.0;
-    return float(imageLoad(volumeTexture, p).r);
+// ── TSDF unpacking ─────────────────────────────────────────────────────
+
+// Unpack uint32 → TSDF distance value
+float unpackTsdfDistance(uint packed) {
+    uint tsdfBits = (packed >> 16u) & 0xFFFFu;
+    return (float(tsdfBits) - 32768.0) / 32767.0;
 }
 
-// Compute gradient (central differences) for normal estimation
+// Unpack uint32 → weight value
+float unpackTsdfWeight(uint packed) {
+    return float(packed & 0xFFFFu);
+}
+
+// ── Volume sampling ────────────────────────────────────────────────────
+
+// Sample the TSDF at integer coordinates.
+// Returns TSDF distance, or +1.0 if out of bounds or weight too low.
+float sampleTsdf(ivec3 p) {
+    if (any(lessThan(p, ivec3(0))) || any(greaterThanEqual(p, ivec3(pc.volumeSize))))
+        return 1.0; // Outside volume = free space
+    uint packed = imageLoad(volumeTexture, p).r;
+    float weight = unpackTsdfWeight(packed);
+    if (weight < pc.minWeight) return 1.0; // Not enough observations
+    return unpackTsdfDistance(packed);
+}
+
+// Compute gradient (central differences) of the TSDF field for normal estimation
 vec3 computeGradient(ivec3 p) {
-    float dx = sampleVolume(p + ivec3(1,0,0)) - sampleVolume(p - ivec3(1,0,0));
-    float dy = sampleVolume(p + ivec3(0,1,0)) - sampleVolume(p - ivec3(0,1,0));
-    float dz = sampleVolume(p + ivec3(0,0,1)) - sampleVolume(p - ivec3(0,0,1));
+    float dx = sampleTsdf(p + ivec3(1,0,0)) - sampleTsdf(p - ivec3(1,0,0));
+    float dy = sampleTsdf(p + ivec3(0,1,0)) - sampleTsdf(p - ivec3(0,1,0));
+    float dz = sampleTsdf(p + ivec3(0,0,1)) - sampleTsdf(p - ivec3(0,0,1));
     return vec3(dx, dy, dz);
 }
 
 // Interpolate vertex position along an edge between two corners
+// For TSDF, the surface is at the zero-crossing (threshold = 0)
 vec3 interpolateEdge(vec3 p0, vec3 p1, float v0, float v1) {
-    float threshold = float(pc.cutoff);
-    if (abs(v0 - v1) < 0.001) return (p0 + p1) * 0.5;
-    float t = (threshold - v0) / (v1 - v0);
+    if (abs(v0 - v1) < 0.0001) return (p0 + p1) * 0.5;
+    float t = (0.0 - v0) / (v1 - v0); // zero-crossing
     t = clamp(t, 0.0, 1.0);
     return mix(p0, p1, t);
 }
@@ -101,19 +127,20 @@ void main() {
     // Sample the 8 corners of this cell
     float cornerValues[8];
     for (int i = 0; i < 8; i++) {
-        cornerValues[i] = sampleVolume(basePos + cornerOffsets[i]);
+        cornerValues[i] = sampleTsdf(basePos + cornerOffsets[i]);
     }
 
-    // Build the case index: bit i is set if corner i is above threshold
-    float threshold = float(pc.cutoff);
+    // Build the case index: bit i is set if corner i is NEGATIVE (inside object)
+    // This is the opposite convention from occupancy-based MC where we check >= threshold.
+    // For TSDF: negative = inside, so the bit is set for inside corners.
     int cubeIndex = 0;
     for (int i = 0; i < 8; i++) {
-        if (cornerValues[i] >= threshold) {
+        if (cornerValues[i] < 0.0) {
             cubeIndex |= (1 << i);
         }
     }
 
-    // No triangles for this cell
+    // No triangles for this cell (all corners same sign = no zero-crossing)
     int edges = edgeTable.data[cubeIndex];
     if (edges == 0) return;
 
@@ -131,12 +158,14 @@ void main() {
             // Interpolate normals from gradients at the two corners
             vec3 na = computeGradient(basePos + cornerOffsets[a]);
             vec3 nb = computeGradient(basePos + cornerOffsets[b]);
-            float t = (abs(cornerValues[a] - cornerValues[b]) < 0.001)
+            float t = (abs(cornerValues[a] - cornerValues[b]) < 0.0001)
                 ? 0.5
-                : clamp((threshold - cornerValues[a]) / (cornerValues[b] - cornerValues[a]), 0.0, 1.0);
+                : clamp((0.0 - cornerValues[a]) / (cornerValues[b] - cornerValues[a]), 0.0, 1.0);
             vec3 n = mix(na, nb, t);
             float len = length(n);
-            edgeNormals[i] = (len > 0.001) ? -n / len : vec3(0.0, 1.0, 0.0);
+            // Gradient of SDF points from inside → outside (positive direction).
+            // We want the surface normal pointing outward, which is the gradient direction.
+            edgeNormals[i] = (len > 0.001) ? n / len : vec3(0.0, 1.0, 0.0);
         }
     }
 
@@ -168,7 +197,7 @@ void main() {
 
         // Write vertices (8 floats each: pos3 + normal3 + uv2)
         // Convert from voxel coordinates to world coordinates:
-        // world = (voxelPos - 512) / scale
+        // world = (voxelPos - volumeSize/2) / scale
         float invScale = 1.0 / pc.scale;
         vec3 worldCenter = vec3(float(pc.volumeSize) * 0.5);
 
@@ -197,7 +226,6 @@ void main() {
 
         // Write indices — reversed winding (0,2,1) so triangles are CCW in
         // Vulkan's coordinate system (Y-down in NDC vs OpenGL's Y-up).
-        // The Bourke tri table assumes OpenGL/right-hand winding.
         outIndices.data[idxBase + 0] = vertBase + 0;
         outIndices.data[idxBase + 1] = vertBase + 2;
         outIndices.data[idxBase + 2] = vertBase + 1;

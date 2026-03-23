@@ -65,6 +65,12 @@ namespace ar {
             LOAD_ARCORE_FUNC(ArConfig_destroy);
             LOAD_ARCORE_FUNC(ArConfig_setDepthMode);
             LOAD_ARCORE_FUNC(ArConfig_setPlaneFindingMode);
+            // Optional — not available on all ARCore versions
+            ArConfig_setFlashMode = reinterpret_cast<decltype(ArConfig_setFlashMode)>(
+                dlsym(handle_, "ArConfig_setFlashMode"));
+            if (!ArConfig_setFlashMode) {
+                LOGE("ArConfig_setFlashMode not available, flash disabled");
+            }
 
             // Frame functions
             LOAD_ARCORE_FUNC(ArFrame_create);
@@ -78,6 +84,7 @@ namespace ar {
             // Camera functions
             LOAD_ARCORE_FUNC(ArCamera_getViewMatrix);
             LOAD_ARCORE_FUNC(ArCamera_getProjectionMatrix);
+            LOAD_ARCORE_FUNC(ArCamera_getPose);
             LOAD_ARCORE_FUNC(ArCamera_getTrackingState);
             LOAD_ARCORE_FUNC(ArCamera_release);
 
@@ -185,6 +192,8 @@ namespace ar {
                                       ArDepthMode mode) = nullptr;
         void (*ArConfig_setPlaneFindingMode)(const ArSession* session, ArConfig* config,
                                              ArPlaneFindingMode mode) = nullptr;
+        void (*ArConfig_setFlashMode)(const ArSession* session, ArConfig* config,
+                                      ArFlashMode flash_mode) = nullptr;
 
         // ── Frame ──
         ArStatus (*ArFrame_create)(const ArSession* session, ArFrame** out_frame) = nullptr;
@@ -206,6 +215,8 @@ namespace ar {
                                        float* out_col_major_4x4) = nullptr;
         void (*ArCamera_getProjectionMatrix)(const ArSession* session, const ArCamera* camera,
                                              float near, float far, float* dest_col_major_4x4) = nullptr;
+        void (*ArCamera_getPose)(const ArSession* session, const ArCamera* camera,
+                                  ArPose* out_pose) = nullptr;
         void (*ArCamera_getTrackingState)(const ArSession* session, const ArCamera* camera,
                                           ArTrackingState* out_tracking_state) = nullptr;
         void (*ArCamera_release)(ArCamera* camera) = nullptr;

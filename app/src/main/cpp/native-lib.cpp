@@ -33,12 +33,13 @@
 #include "image_load.h"
 #include <glm/gtc/type_ptr.hpp>
 #include "ar_depth_image.h"
-#include "voxel_volume.h"
+#include "tsdf_volume.h"
 #include "gpu_mesh.h"
 #include "vk_debug.h"
-#include "depth_deprojection_op.h"
-#include "voxelization_op.h"
 #include "marching_cubes_op.h"
+#include "tsdf_volume.h"
+#include "tsdf_fusion_op.h"
+#include "chisel_bridge/chisel_manager.h"
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
@@ -62,18 +63,15 @@ std::unique_ptr<graphics::Renderable> cameraBgQuad = nullptr;
 std::unique_ptr<graphics::Renderable> composeQuad = nullptr;
 std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
 std::unique_ptr<graphics::ArDepthImage> gArDepthImage = nullptr;
-std::unique_ptr<graphics::VoxelVolume> gVoxelVolume = nullptr;
-std::unique_ptr<graphics::GpuMesh> gWorldMesh = nullptr;
+std::unique_ptr<graphics::TsdfVolume> gTsdfVolume = nullptr;
+std::unique_ptr<graphics::MutableMesh> gWorldMesh = nullptr;
 // Compute operations (own their pipelines, descriptor layouts, and GPU resources)
-std::unique_ptr<graphics::DepthDeprojectionOp> gDeprojectionOp = nullptr;
-std::unique_ptr<graphics::VoxelizationOp>      gVoxelizationOp = nullptr;
+std::unique_ptr<graphics::TsdfFusionOp>        gTsdfFusionOp = nullptr;
 std::unique_ptr<graphics::MarchingCubesOp>     gMarchingCubesOp = nullptr;
+std::unique_ptr<reconstruction::ChiselManager> gChiselManager = nullptr;
 std::unique_ptr<graphics::Texture2D> gMeshTexture = nullptr;
 std::unique_ptr<graphics::Pipeline> gWorldMeshPipeline = nullptr;
 std::unique_ptr<graphics::Renderable> gWorldMeshRenderable = nullptr;
-// Marching cubes output capacity
-static constexpr uint32_t MC_MAX_VERTICES = 500'000;
-static constexpr uint32_t MC_MAX_INDICES  = 1'500'000;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -132,6 +130,16 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .AddDescriptorSetLayout(transPhongDescriptorSetLayout)
             .Build();
     pipelineLayouts.insert({"transparent_phong", transPhongPipelineLayout});
+    // Opaque Phong: UBO only (binding 0, vert+frag) — no texture sampler
+    auto opaquePhongDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
+            .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .Build();
+    descriptorSetLayouts.insert({"opaque_phong", opaquePhongDescriptorSetLayout});
+    auto opaquePhongPipelineLayout = graphics::PipelineLayoutBuilder(gVkContext->GetDevice())
+            .AddDescriptorSetLayout(opaquePhongDescriptorSetLayout)
+            .Build();
+    pipelineLayouts.insert({"opaque_phong", opaquePhongPipelineLayout});
     // Camera background: UBO (binding 0) + Y sampler (binding 1) + UV sampler (binding 2)
     auto cameraBgDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
             .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
@@ -152,7 +160,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .AddDescriptorSetLayout(composeDescriptorSetLayout)
             .Build();
     pipelineLayouts.insert({"compose", composePipelineLayout});
-    // Compute operations are created below, after VoxelVolume and GpuMesh.
+    // Compute operations are created below, after TsdfVolume and GpuMesh.
     // They own their own descriptor set layouts and pipeline layouts.
 
     ANativeWindow_release(window);
@@ -227,17 +235,21 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
                                                              gVkContext->GetAllocator(),
                                                              "ArDepthImage");
 
-    // create the voxel volume (256³ R8_UINT 3D texture, cleared to zero)
-    gVoxelVolume = std::make_unique<graphics::VoxelVolume>(gVkContext->GetDevice(),
-                                                            gVkContext->GetAllocator(),
-                                                            *gCommandPoolManager,
-                                                            "VoxelVolume");
-    // create the GPU mesh for marching cubes output
-    gWorldMesh = std::make_unique<graphics::GpuMesh>(gVkContext->GetDevice(),
-                                                      gVkContext->GetAllocator(),
-                                                      MC_MAX_VERTICES,
-                                                      MC_MAX_INDICES,
-                                                      "WorldMesh");
+    // Create CPU-uploaded mesh for OpenChisel output (replaces GpuMesh).
+    gWorldMesh = std::make_unique<graphics::MutableMesh>(gVkContext->GetDevice(),
+                                                          gVkContext->GetAllocator(),
+                                                          *gCommandPoolManager,
+                                                          WORLD_MESH_MAX_VERTICES,
+                                                          WORLD_MESH_MAX_INDICES,
+                                                          "WorldMesh");
+    // OpenChisel-based reconstruction manager (worker thread handles integration)
+    gChiselManager = std::make_unique<reconstruction::ChiselManager>();
+
+    // ── Preserved compute infrastructure (not used for TSDF, kept for future use) ──
+    gTsdfVolume = std::make_unique<graphics::TsdfVolume>(gVkContext->GetDevice(),
+                                                          gVkContext->GetAllocator(),
+                                                          *gCommandPoolManager,
+                                                          "TsdfVolume");
     // Load mesh texture for the world mesh (transparent phong shading).
     // Uses textures/mesh.png if available; nullptr triggers a placeholder in the pipeline.
     if (io::AssetLoader::exists("textures/mesh.png")) {
@@ -268,15 +280,13 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     graphics::ComputeOperation::InitContext computeCtx{
         gVkContext->GetDevice(), gVkContext->GetAllocator()
     };
-    gDeprojectionOp  = std::make_unique<graphics::DepthDeprojectionOp>(computeCtx);
-    gVoxelizationOp  = std::make_unique<graphics::VoxelizationOp>(computeCtx);
+    gTsdfFusionOp    = std::make_unique<graphics::TsdfFusionOp>(computeCtx);
     gMarchingCubesOp = std::make_unique<graphics::MarchingCubesOp>(computeCtx);
 
     // Wire up static connections (non-owning pointers to shared resources)
-    gVoxelizationOp->SetPositionSource(gDeprojectionOp.get());
-    gVoxelizationOp->SetVolumeImageView(gVoxelVolume->GetImageView());
-    gMarchingCubesOp->SetVolumeImageView(gVoxelVolume->GetImageView());
-    gMarchingCubesOp->SetOutputMesh(gWorldMesh.get());
+    gTsdfFusionOp->SetVolumeImageView(gTsdfVolume->GetImageView());
+    gMarchingCubesOp->SetVolumeImageView(gTsdfVolume->GetImageView());
+    // Note: gMarchingCubesOp output mesh not wired — world mesh now comes from OpenChisel
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -310,15 +320,13 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                                                                        gCommandPoolManager.get()),
                                                                       pipelineLayouts["transparent_phong"],
                                                                       descriptorSetLayouts["transparent_phong"]);
-    // World mesh pipeline: separate transparent phong instance with mesh.png texture
-    // (or placeholder if mesh.png not yet provided)
+    // World mesh pipeline: opaque phong with fixed red color for TSDF mesh visualization
     gWorldMeshPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
                                                                gVkContext->GetDevice(),
                                                                gVkContext->GetAllocator(),
-                                                               graphics::TransparentPhongConfig(gMeshTexture.get(),
-                                                                                                gCommandPoolManager.get()),
-                                                               pipelineLayouts["transparent_phong"],
-                                                               descriptorSetLayouts["transparent_phong"]);
+                                                               graphics::OpaquePhongConfig(glm::vec3(1.0f, 0.0f, 0.0f)),
+                                                               pipelineLayouts["opaque_phong"],
+                                                               descriptorSetLayouts["opaque_phong"]);
     gCameraBgPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
                                                               gVkContext->GetDevice(),
                                                               gVkContext->GetAllocator(),
@@ -343,6 +351,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceDest
     gMeshes.clear();
 }
 int32_t previousArDepthWidth = 0;
+uint32_t gFrameCount = 0;  // for throttling compute dispatches
 extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(JNIEnv *env,
@@ -378,97 +387,118 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
     const uint32_t frameIndex = gVkContext->GetFrameIndex();
     /////////////////////////////
-    // ── Compute pipeline: depth → voxels → mesh ────────────────────────
-    // Each stage is a ComputeOperation that owns its pipeline, descriptors,
-    // and GPU resources. The orchestration here just feeds per-frame data
-    // and calls Execute() / InsertPostBarrier() in sequence.
+    // ── OpenChisel TSDF reconstruction ──────────────────────────────────
+    // Depth data is sent to the ChiselManager worker thread for integration.
+    // When new mesh data is available, it's uploaded to the MutableMesh.
     /////////////////////////////
+    // Advance the world mesh ring buffer for this frame
+    gWorldMesh->Advance();
+
     ArImage* depthImageHandle = gArSessionManager->getDepthImage();
-    // Skip the entire compute pipeline if ARCore doesn't have a depth frame yet.
     if (depthImageHandle != nullptr) {
-        // Get depth image dimensions
         int32_t arDepthWidth = 0, arDepthHeight = 0;
         gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
 
-        // Lazy initialization: once we know depth dimensions, set them and
-        // initialize all three operations (they create their Vulkan pipelines
-        // and allocate GPU resources).
-        if (!gDeprojectionOp->IsInitialized()) {
+        // Lazy-init OpenChisel on first valid depth frame
+        if (!gChiselManager->IsInitialized()) {
             assert(arDepthWidth > 0 && arDepthHeight > 0 && "Depth image has zero dimensions");
-            previousArDepthWidth = arDepthWidth;
-            gDeprojectionOp->SetDimensions(
-                static_cast<uint32_t>(arDepthWidth),
-                static_cast<uint32_t>(arDepthHeight));
-            gDeprojectionOp->Initialize();
-            gVoxelizationOp->Initialize();
-            gMarchingCubesOp->Initialize();
-        } else {
-            // Can't deal with changing depth buffer size — assert it's stable
-            assert(previousArDepthWidth == arDepthWidth);
+            gChiselManager->Initialize(
+                0.01f,   // voxelResolution: 1cm voxels (each 16³ chunk = 16cm per side)
+                0.03f,   // truncationDist:  3cm (≈3× voxel size)
+                0.03f,   // carvingDist:     3cm
+                true,    // enableCarving
+                16,      // chunkSizeVoxels
+                0        // threadCount: auto-detect
+            );
+            LOGI("[TSDF] Initialized ChiselManager on first depth frame (%dx%d)", arDepthWidth, arDepthHeight);
         }
 
-        // Get depth data from ARCore and upload to Vulkan SSBO
+        // Get depth data from ARCore
         int32_t depthStride = 0;
         std::vector<uint16_t> depthData{};
         gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
         gArSessionManager->releaseDepthImage(depthImageHandle);
 
-        gArDepthImage->Advance();
-        gArDepthImage->UpdateImage(depthData,
-            {static_cast<uint32_t>(arDepthWidth), static_cast<uint32_t>(arDepthHeight)});
+        // Diagnostic: check depth data quality
+        static int depthFrameCount = 0;
+        depthFrameCount++;
+        if (depthFrameCount <= 5 || depthFrameCount % 60 == 0) {
+            int nonZero = 0;
+            uint16_t minVal = UINT16_MAX, maxVal = 0;
+            for (uint16_t v : depthData) {
+                if (v > 0) {
+                    nonZero++;
+                    if (v < minVal) minVal = v;
+                    if (v > maxVal) maxVal = v;
+                }
+            }
+            LOGI("[TSDF] depth frame %d: %dx%d, %d/%zu non-zero (%.1f%%), range %u-%u mm",
+                 depthFrameCount, arDepthWidth, arDepthHeight,
+                 nonZero, depthData.size(),
+                 depthData.empty() ? 0.0 : 100.0 * nonZero / depthData.size(),
+                 nonZero > 0 ? (unsigned)minVal : 0u,
+                 nonZero > 0 ? (unsigned)maxVal : 0u);
+        }
 
-        // Get camera intrinsics (scaled to depth image resolution)
+        // Get camera intrinsics scaled to depth resolution.
+        // ArCamera_getImageIntrinsics returns values for the full-resolution CPU image
+        // (e.g. 1920x1080), but the depth image is lower-res (e.g. 240x180).
+        // Scale fx/fy/cx/cy by the ratio so they match the depth image pixel grid.
         ar::ArDepthIntrinsics arDepthIntrinsics{};
         gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
         float scaleX = static_cast<float>(arDepthWidth)  / static_cast<float>(arDepthIntrinsics.w);
         float scaleY = static_cast<float>(arDepthHeight) / static_cast<float>(arDepthIntrinsics.h);
 
-        // Get view-inverse matrix (camera → world)
-        std::array<float,16> arViewMatrix{};
-        gArSessionManager->getViewMatrix(arViewMatrix.data());
-        glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
-        glm::mat4 viewInvMat = glm::inverse(viewMat);
-        std::array<float,16> viewInvArray{};
-        memcpy(viewInvArray.data(), glm::value_ptr(viewInvMat), sizeof(float) * 16);
-
-        // Skip dispatch if depth buffer hasn't been uploaded yet
-        VkBuffer currentDepthBuffer = gArDepthImage->GetCurrentBuffer();
-        if (currentDepthBuffer != VK_NULL_HANDLE) {
-            // ── Stage 1: Depth deprojection ─────────────────────────────
-            gDeprojectionOp->SetDepthBuffer(currentDepthBuffer);
-            gDeprojectionOp->SetIntrinsics(
-                arDepthIntrinsics.fx * scaleX,
-                arDepthIntrinsics.fy * scaleY,
-                arDepthIntrinsics.cx * scaleX,
-                arDepthIntrinsics.cy * scaleY);
-            gDeprojectionOp->SetViewInverse(viewInvArray);
-            gDeprojectionOp->SetDimensions(
-                static_cast<uint32_t>(arDepthWidth),
-                static_cast<uint32_t>(arDepthHeight));
-            gDeprojectionOp->Execute(cmd, frameIndex);
-            gDeprojectionOp->InsertPostBarrier(cmd);
-
-            // ── Stage 2: Voxelization ───────────────────────────────────
-            uint32_t positionCount = static_cast<uint32_t>(arDepthWidth)
-                                   * static_cast<uint32_t>(arDepthHeight);
-            gVoxelizationOp->SetPositionCount(positionCount);
-            gVoxelizationOp->SetScale(100.0f);   // 1 voxel = 1 cm
-            gVoxelizationOp->SetVolumeSize(graphics::VoxelVolume::VOLUME_SIZE);
-            gVoxelizationOp->Execute(cmd, frameIndex);
-            gVoxelizationOp->InsertPostBarrier(cmd);
-
-            // ── Stage 3: Marching cubes ─────────────────────────────────
-            gWorldMesh->ResetCounters();
-            gMarchingCubesOp->SetCutoff(127);
-            gMarchingCubesOp->SetScale(100.0f);
-            gMarchingCubesOp->SetMaxDistance(2.0f);
-            gMarchingCubesOp->Execute(cmd, frameIndex);
-            gMarchingCubesOp->InsertPostBarrier(cmd);
-
-            // Copy GPU-written counts into the indirect draw buffer
-            gWorldMesh->PrepareIndirectDraw(cmd);
+        if (depthFrameCount <= 3) {
+            LOGI("[TSDF] intrinsics: cam(%dx%d) fx=%.1f fy=%.1f cx=%.1f cy=%.1f → depth scale %.3f x %.3f → fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
+                 arDepthIntrinsics.w, arDepthIntrinsics.h,
+                 arDepthIntrinsics.fx, arDepthIntrinsics.fy,
+                 arDepthIntrinsics.cx, arDepthIntrinsics.cy,
+                 scaleX, scaleY,
+                 arDepthIntrinsics.fx * scaleX, arDepthIntrinsics.fy * scaleY,
+                 arDepthIntrinsics.cx * scaleX, arDepthIntrinsics.cy * scaleY);
         }
-    } // depthImageHandle != nullptr
+
+        // Get the PHYSICAL (sensor-oriented) view matrix for TSDF integration.
+        // ArCamera_getViewMatrix is display-oriented (rotated to match screen),
+        // but the depth image and ArCamera_getImageIntrinsics are in the
+        // unrotated sensor frame. Using the physical pose from ArCamera_getPose
+        // ensures the view matrix matches the depth data coordinate system.
+        std::array<float, 16> arViewMatrix{};
+        gArSessionManager->getSensorViewMatrix(arViewMatrix.data());
+
+        // Queue frame for async integration (non-blocking)
+        reconstruction::ChiselManager::FrameInput frameInput;
+        frameInput.depthData = std::move(depthData);
+        frameInput.width = arDepthWidth;
+        frameInput.height = arDepthHeight;
+        frameInput.fx = arDepthIntrinsics.fx * scaleX;
+        frameInput.fy = arDepthIntrinsics.fy * scaleY;
+        frameInput.cx = arDepthIntrinsics.cx * scaleX;
+        frameInput.cy = arDepthIntrinsics.cy * scaleY;
+        frameInput.viewMatrix = arViewMatrix;
+        gChiselManager->IntegrateFrame(frameInput);
+    } else {
+        static int depthNullCount = 0;
+        depthNullCount++;
+        if (depthNullCount <= 3 || depthNullCount % 120 == 0) {
+            LOGI("[TSDF] getDepthImage returned nullptr (%d times so far)", depthNullCount);
+        }
+    }
+
+    // Check if worker thread produced a new mesh — upload to GPU if so
+    reconstruction::ChiselManager::MeshOutput meshOut;
+    if (gChiselManager && gChiselManager->PollMesh(meshOut) && !meshOut.indices.empty()) {
+        uint32_t vertCount = static_cast<uint32_t>(meshOut.vertices.size() / 8);
+        uint32_t idxCount = static_cast<uint32_t>(meshOut.indices.size());
+        gWorldMesh->UpdateMesh(meshOut.vertices.data(), vertCount,
+                               meshOut.indices.data(), idxCount);
+        static int meshUploadCount = 0;
+        meshUploadCount++;
+        if (meshUploadCount <= 5 || meshUploadCount % 60 == 0) {
+            LOGI("[TSDF] mesh upload #%d: %u verts, %u indices", meshUploadCount, vertCount, idxCount);
+        }
+    }
 
     ////////////////////////////
     // Update AR planes
@@ -543,12 +573,11 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     {
         vkDestroyPipelineLayout(gVkContext->GetDevice(), value, nullptr);
     }
-    // Destroy compute operations before their shared resources (VoxelVolume, GpuMesh)
+    // Destroy compute operations before their shared resources (TsdfVolume, GpuMesh)
     gMarchingCubesOp = nullptr;
-    gVoxelizationOp  = nullptr;
-    gDeprojectionOp  = nullptr;
+    gTsdfFusionOp    = nullptr;
     gWorldMesh = nullptr;
-    gVoxelVolume = nullptr;
+    gTsdfVolume = nullptr;
     gArDepthImage = nullptr;
     gWorldMeshRenderable = nullptr;
     gComposePipeline = nullptr;
@@ -654,6 +683,8 @@ void UpdateARPlanes() {
             graphics::MutableMesh* newMesh = new graphics::MutableMesh(gVkContext->GetDevice(),
                                                                        gVkContext->GetAllocator(),
                                                                        *(gCommandPoolManager.get()),
+                                                                       graphics::MutableMesh::DEFAULT_MAX_VERTS,
+                                                                       graphics::MutableMesh::DEFAULT_MAX_INDICES,
                                                                        name);
             newRenderable->SetMesh(newMesh, true);
             gArPlanes.insert({planeid, newRenderable});

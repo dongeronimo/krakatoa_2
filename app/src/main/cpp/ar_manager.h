@@ -7,13 +7,16 @@
 #include <vector>
 
 namespace ar {
+    /// Pinhole camera intrinsics in sensor (unrotated) coordinates.
+    /// (w, h) is the native camera image resolution — NOT the depth image resolution.
+    /// Callers must scale fx/fy/cx/cy by (depthWidth/w, depthHeight/h) before use.
     struct ArDepthIntrinsics {
-        float fx;
-        float fy;
-        float cx;
-        float cy;
-        int32_t w;
-        int32_t h;
+        float fx;      ///< Focal length along sensor horizontal axis (pixels)
+        float fy;      ///< Focal length along sensor vertical axis (pixels)
+        float cx;      ///< Principal point x (pixels from left edge)
+        float cy;      ///< Principal point y (pixels from top edge)
+        int32_t w;     ///< Native image width (sensor horizontal)
+        int32_t h;     ///< Native image height (sensor vertical)
     };
     /// Raw YUV camera frame data (CPU-side, no GL_TEXTURE_EXTERNAL_OES)
     struct CameraFrame {
@@ -90,6 +93,12 @@ namespace ar {
                 )>& fn);
 
         void getViewMatrix(float* outMatrix);
+        /// Returns a view matrix (world → camera) based on the physical
+        /// (sensor-oriented) camera pose from ArCamera_getPose.
+        /// Unlike getViewMatrix(), the axes are NOT rotated to match the
+        /// display — they match the camera sensor, which is what the depth
+        /// image and unrotated intrinsics expect.
+        void getSensorViewMatrix(float* outMatrix);
         void getProjectionMatrix(float nearClip, float farClip, float* outMatrix);
         void getDepthImageDimensions(ArImage* image, int32_t& w, int32_t& h);
         void getDepthImageData(ArImage* image, std::vector<uint16_t>& data, int32_t& stride);

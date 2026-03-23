@@ -33,6 +33,22 @@ FetchContent_Declare(
         GIT_SHALLOW TRUE
 )
 
+# Eigen - header-only math library (required by OpenChisel)
+FetchContent_Declare(
+        eigen
+        GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+        GIT_TAG 3.4.0
+        GIT_SHALLOW TRUE
+)
+
+# OpenChisel - chunked TSDF reconstruction
+FetchContent_Declare(
+        open_chisel
+        GIT_REPOSITORY https://github.com/personalrobotics/OpenChisel.git
+        GIT_TAG master
+        GIT_SHALLOW TRUE
+)
+
 # Configure Assimp - minimal build
 set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
@@ -46,13 +62,48 @@ set(ASSIMP_ANDROID_JNIIOSYSTEM OFF CACHE BOOL "" FORCE)
 set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
 
 message(STATUS "Fetching dependencies...")
+# Eigen is header-only: just download, don't run its CMake (avoids SuperLU/BLAS issues)
+FetchContent_GetProperties(eigen)
+if(NOT eigen_POPULATED)
+    FetchContent_Populate(eigen)
+endif()
+# OpenChisel: just download, skip its catkin-based CMake
+FetchContent_GetProperties(open_chisel)
+if(NOT open_chisel_POPULATED)
+    FetchContent_Populate(open_chisel)
+endif()
 FetchContent_MakeAvailable(glm assimp json)
+
+# Build OpenChisel core library (skip its catkin/ROS build system entirely)
+add_library(open_chisel STATIC
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/Chisel.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/Chunk.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/ChunkManager.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/ColorVoxel.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/DistVoxel.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/ProjectionIntegrator.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/camera/Intrinsics.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/camera/PinholeCamera.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/geometry/AABB.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/geometry/Frustum.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/geometry/Plane.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/geometry/Raycast.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/io/PLY.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/marching_cubes/MarchingCubes.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/mesh/Mesh.cpp
+        ${open_chisel_SOURCE_DIR}/open_chisel/src/pointcloud/PointCloud.cpp
+)
+target_include_directories(open_chisel SYSTEM PUBLIC
+        ${open_chisel_SOURCE_DIR}/open_chisel/include
+        ${eigen_SOURCE_DIR}
+)
+target_compile_options(open_chisel PRIVATE -O2 -DNDEBUG -Wno-error)
 
 # 16KB page size alignment for Android 15+
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
 
-# Find Android libraries
+# Find Android libraries (must come before chisel_bridge which uses ${log-lib})
 find_library(log-lib log REQUIRED)
 find_library(android-lib android REQUIRED)
 find_library(vulkan-lib vulkan REQUIRED)
@@ -65,6 +116,9 @@ set(ARCORE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third-party.arcore.include)
 if(NOT EXISTS ${ARCORE_INCLUDE_DIR})
     message(WARNING "ARCore headers not found at ${ARCORE_INCLUDE_DIR}")
 endif()
+
+# chisel_bridge — optimized OpenChisel wrapper (own CMakeLists.txt)
+add_subdirectory(chisel_bridge)
 
 # Main library
 add_library(${CMAKE_PROJECT_NAME} SHARED
@@ -139,6 +193,10 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         marching_cubes_tables.h
         gpu_mesh.cpp
         gpu_mesh.h
+        tsdf_volume.cpp
+        tsdf_volume.h
+        tsdf_fusion_op.cpp
+        tsdf_fusion_op.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
@@ -158,6 +216,8 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         nlohmann_json::nlohmann_json
         assimp::assimp
         glm::glm
+        chisel_bridge
+        open_chisel
         EGL
         GLESv3
 )
@@ -168,6 +228,8 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         GLM_FORCE_DEPTH_ZERO_TO_ONE
         GLM_FORCE_SIZE_T_LENGTH
         VK_USE_PLATFORM_ANDROID_KHR
+        WORLD_MESH_MAX_VERTICES=2000000
+        WORLD_MESH_MAX_INDICES=6000000
 )
 
 # Compiler options
