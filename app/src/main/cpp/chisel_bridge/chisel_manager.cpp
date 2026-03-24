@@ -167,7 +167,7 @@ namespace reconstruction {
         // GetStats), so this cap directly controls frustum size.
         // At 1cm voxels, 1.5m gives ~600 frustum chunks vs ~2000 at 3.5m.
         constexpr float kNearPlane = 0.1f;
-        constexpr float kFarPlane = 1.5f;
+        constexpr float kFarPlane = 5.0f;
         auto depthImage = std::make_shared<chisel::DepthImage<float>>(input.width, input.height);
         float* depthPtr = depthImage->GetMutableData();
         float maxObservedDepth = 0.0f;
@@ -183,7 +183,24 @@ namespace reconstruction {
         }
 
         // If no valid depth pixels in this frame, skip integration entirely
-        if (maxObservedDepth <= 0.0f) return;
+        if (maxObservedDepth <= 0.0f) {
+            static int skippedCount = 0;
+            skippedCount++;
+            if (skippedCount <= 3 || skippedCount % 60 == 0) {
+                // Log the raw range so we can see WHY nothing passed the filter
+                uint16_t rawMin = UINT16_MAX, rawMax = 0;
+                for (int i = 0; i < input.width * input.height; i++) {
+                    uint16_t v = input.depthData[i];
+                    if (v > 0) {
+                        if (v < rawMin) rawMin = v;
+                        if (v > rawMax) rawMax = v;
+                    }
+                }
+                LOGW("[TSDF] ProcessFrame: ALL pixels outside [%.1f, %.1f]m — raw range %u-%u mm (%d skipped frames)",
+                     kNearPlane, kFarPlane, (unsigned)rawMin, (unsigned)rawMax, skippedCount);
+            }
+            return;
+        }
 
         float effectiveFar = maxObservedDepth;
 
