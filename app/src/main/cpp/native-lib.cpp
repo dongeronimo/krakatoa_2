@@ -426,9 +426,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         if (!gChiselManager->IsInitialized()) {
             assert(arDepthWidth > 0 && arDepthHeight > 0 && "Depth image has zero dimensions");
             gChiselManager->Initialize(
-                0.02f,   // voxelResolution: 2cm voxels (each 16³ chunk = 32cm per side)
-                0.06f,   // truncationDist:  6cm (≈3× voxel size)
-                0.06f,   // carvingDist:     6cm
+                0.015f,  // voxelResolution: 1.5cm voxels (each 16³ chunk = 24cm per side)
+                0.045f,  // truncationDist:  4.5cm (3× voxel size)
+                0.10f,   // carvingDist:     10cm  (aggressive — clears noise fast)
                 true,    // enableCarving
                 16,      // chunkSizeVoxels
                 0,       // threadCount: auto-detect
