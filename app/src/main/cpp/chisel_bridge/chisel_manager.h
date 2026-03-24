@@ -101,12 +101,12 @@ namespace reconstruction {
         /// Maximum distance (meters) from camera for chunks to be included in
         /// the consolidated mesh sent to the GPU. Chunks beyond this radius
         /// are still in RAM but not rendered — saves GPU bandwidth.
-        static constexpr float CONSOLIDATION_RADIUS = 3.0f;
+        static constexpr float CONSOLIDATION_RADIUS = 2.0f;
         static constexpr float CONSOLIDATION_RADIUS_SQ = CONSOLIDATION_RADIUS * CONSOLIDATION_RADIUS;
 
         /// Radius within which serialized (on-disk) chunks are reloaded into RAM.
         /// Must be smaller than the effective prune distance to avoid thrashing.
-        static constexpr float RELOAD_RADIUS = 2.5f;
+        static constexpr float RELOAD_RADIUS = 1.8f;
         static constexpr float RELOAD_RADIUS_SQ = RELOAD_RADIUS * RELOAD_RADIUS;
 
         /// Maximum number of chunks to reload from disk per integration frame.
