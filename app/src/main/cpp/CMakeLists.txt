@@ -71,6 +71,17 @@ endif()
 FetchContent_GetProperties(open_chisel)
 if(NOT open_chisel_POPULATED)
     FetchContent_Populate(open_chisel)
+    # Aggressive carving: Carve() resets voxel instead of weighted nudge
+    execute_process(
+        COMMAND git apply ${CMAKE_CURRENT_SOURCE_DIR}/patches/open_chisel_aggressive_carve.patch
+        WORKING_DIRECTORY ${open_chisel_SOURCE_DIR}
+        RESULT_VARIABLE patch_result
+    )
+    if(patch_result EQUAL 0)
+        message(STATUS "Applied aggressive carve patch to OpenChisel")
+    else()
+        message(STATUS "OpenChisel patch already applied or failed (${patch_result})")
+    endif()
 endif()
 FetchContent_MakeAvailable(glm assimp json)
 
