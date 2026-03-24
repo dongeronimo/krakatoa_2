@@ -49,6 +49,14 @@ FetchContent_Declare(
         GIT_SHALLOW TRUE
 )
 
+# Dear ImGui - immediate-mode GUI
+FetchContent_Declare(
+        imgui
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG v1.91.6
+        GIT_SHALLOW TRUE
+)
+
 # Configure Assimp - minimal build
 set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
@@ -82,6 +90,11 @@ if(NOT open_chisel_POPULATED)
     else()
         message(STATUS "OpenChisel patch already applied or failed (${patch_result})")
     endif()
+endif()
+# ImGui: just download, we build it ourselves as a static lib
+FetchContent_GetProperties(imgui)
+if(NOT imgui_POPULATED)
+    FetchContent_Populate(imgui)
 endif()
 FetchContent_MakeAvailable(glm assimp json)
 
@@ -130,6 +143,9 @@ endif()
 
 # chisel_bridge — optimized OpenChisel wrapper (own CMakeLists.txt)
 add_subdirectory(chisel_bridge)
+
+# imgui — Dear ImGui static library (Vulkan backend for Android)
+add_subdirectory(imgui)
 
 # Main library
 add_library(${CMAKE_PROJECT_NAME} SHARED
@@ -208,6 +224,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         tsdf_volume.h
         tsdf_fusion_op.cpp
         tsdf_fusion_op.h
+        imgui_integration.cpp
+        imgui_integration.h
 )
 
 # Include directories - adiciona tanto a raiz quanto a pasta arcore
@@ -229,6 +247,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         glm::glm
         chisel_bridge
         open_chisel
+        imgui
         EGL
         GLESv3
 )

@@ -40,6 +40,8 @@
 #include "tsdf_volume.h"
 #include "tsdf_fusion_op.h"
 #include "chisel_bridge/chisel_manager.h"
+#include "imgui_integration.h"
+#include "imgui.h"
 std::string gChunkStoragePath;  // app-internal dir for serialized TSDF chunks
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
@@ -365,6 +367,25 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                              pipelineLayouts["compose"],
                                                              descriptorSetLayouts["compose"]);
     gFrameSync->RecreateForSwapchain(gVkContext->getSwapchainImageCount());
+
+    // ── ImGui ────────────────────────────────────────────────────────────
+    // (Re-)initialize after swapchain render pass is ready.
+    if (imgui_integration::IsInitialized()) {
+        imgui_integration::Shutdown();
+    }
+    {
+        imgui_integration::InitInfo info{};
+        info.instance       = gVkContext->GetInstance();
+        info.physicalDevice = gVkContext->getPhysicalDevice();
+        info.device         = gVkContext->GetDevice();
+        info.queueFamily    = gVkContext->getQueueFamilies().graphicsFamily.value();
+        info.graphicsQueue  = gVkContext->getGraphicsQueue();
+        info.renderPass     = gSwapChainRenderPass->GetRenderPass();
+        info.imageCount     = gVkContext->getSwapchainImageCount();
+        info.displayWidth   = static_cast<float>(width);
+        info.displayHeight  = static_cast<float>(height);
+        imgui_integration::Init(info);
+    }
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -547,6 +568,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     // Composite offscreen render target (AR planes) over the camera background
     gComposePipeline->Bind(cmd);
     gComposePipeline->Draw(cmd, nullptr, composeQuad.get(), frameIndex);
+
+    // ── ImGui overlay ────────────────────────────────────────────────────
+    imgui_integration::NewFrame(gFrameTimer->GetDeltaTime());
+    ImGui::ShowDemoWindow();   // TODO: replace with app UI
+    imgui_integration::Render(cmd);
+
     gSwapChainRenderPass->End(cmd);
     gCommandPoolManager->EndFrame();
 
@@ -586,6 +613,7 @@ JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEnv *env,
                                                                            jobject thiz) {
     vkDeviceWaitIdle(gVkContext->GetDevice());
+    imgui_integration::Shutdown();
     gCameraImage = nullptr;
     gArSessionManager.release();
     gMeshes.clear();
@@ -650,7 +678,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnTouchEvent(
                                                                                 jobject thiz,
                                                                                 jfloat x, jfloat y,
                                                                                 jint action) {
-    // TODO: implement nativeOnTouchEvent()
+    imgui_integration::OnTouchEvent(x, y, action);
 }
 extern "C"
 JNIEXPORT jintArray JNICALL
