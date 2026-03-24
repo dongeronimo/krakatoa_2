@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include "ring_buffer.h"
 #include <vk_mem_alloc.h>
+#include <glm/vec3.hpp>
 
 namespace graphics {
     class Renderable;
@@ -16,6 +17,7 @@ namespace graphics {
     class ARCameraImage;
     class Texture2D;
     class OffscreenRenderPass;
+    class CommandPoolManager;
 
     /**
      * Configuration for the variable parts of a graphics pipeline.
@@ -115,9 +117,21 @@ namespace graphics {
      * Uses ARCore ambient intensity light estimation: the render callback
      * reads LIGHT_DIR, LIGHT_COLOR and AMBIENT_COLOR from the RDO.
      *
-     * @param texture  Texture to sample. If null, uses a 1x1 white placeholder.
+     * @param texture     Texture to sample. If null, uses a 1x1 white placeholder.
+     * @param cmdManager  Required when texture is null — used for the layout
+     *                    transition of the placeholder image via one-shot submit.
      */
-    PipelineConfig TransparentPhongConfig(Texture2D* texture);
+    PipelineConfig TransparentPhongConfig(Texture2D* texture,
+                                          CommandPoolManager* cmdManager = nullptr);
+
+    /**
+     * Opaque phong: depth-tested solid rendering with a fixed material color.
+     * Same vertex format and lighting as TransparentPhong but no texture,
+     * no blending, depth writes enabled, backface culling on.
+     *
+     * @param color  Fixed material color (RGB).
+     */
+    PipelineConfig OpaquePhongConfig(glm::vec3 color);
 
     /**
      * Compose: alpha-blends the offscreen render pass color attachment over

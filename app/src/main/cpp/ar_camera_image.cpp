@@ -27,6 +27,7 @@ ARCameraImage::~ARCameraImage() {
 
 void ARCameraImage::AdvanceFrame() {
     frameResources.Next();
+    updatedThisFrame = false;
 }
 
 // ============================================================
@@ -153,6 +154,7 @@ void ARCameraImage::Update(VkCommandBuffer cmd, const ar::CameraFrame& frame) {
                          2, toShaderRead);
 
     valid = true;
+    updatedThisFrame = true;
 }
 
 // ============================================================

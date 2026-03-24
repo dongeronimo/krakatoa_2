@@ -64,6 +64,13 @@ namespace ar {
             LOAD_ARCORE_FUNC(ArConfig_create);
             LOAD_ARCORE_FUNC(ArConfig_destroy);
             LOAD_ARCORE_FUNC(ArConfig_setDepthMode);
+            LOAD_ARCORE_FUNC(ArConfig_setPlaneFindingMode);
+            // Optional — not available on all ARCore versions
+            ArConfig_setFlashMode = reinterpret_cast<decltype(ArConfig_setFlashMode)>(
+                dlsym(handle_, "ArConfig_setFlashMode"));
+            if (!ArConfig_setFlashMode) {
+                LOGE("ArConfig_setFlashMode not available, flash disabled");
+            }
 
             // Frame functions
             LOAD_ARCORE_FUNC(ArFrame_create);
@@ -77,6 +84,7 @@ namespace ar {
             // Camera functions
             LOAD_ARCORE_FUNC(ArCamera_getViewMatrix);
             LOAD_ARCORE_FUNC(ArCamera_getProjectionMatrix);
+            LOAD_ARCORE_FUNC(ArCamera_getPose);
             LOAD_ARCORE_FUNC(ArCamera_getTrackingState);
             LOAD_ARCORE_FUNC(ArCamera_release);
 
@@ -135,6 +143,26 @@ namespace ar {
             LOAD_ARCORE_FUNC(ArLightEstimate_getColorCorrection);
             LOAD_ARCORE_FUNC(ArFrame_getLightEstimate);
 
+            // Adquire o depth buffer do frame atual
+            LOAD_ARCORE_FUNC(ArFrame_acquireDepthImage16Bits);
+            // ou a versão original (confidence packed em RGBA)
+            LOAD_ARCORE_FUNC(ArFrame_acquireDepthImage);
+
+            // Para confidence map (opcional mas útil)
+            LOAD_ARCORE_FUNC(ArFrame_acquireRawDepthImage16Bits);
+            LOAD_ARCORE_FUNC(ArFrame_acquireRawDepthConfidenceImage);
+
+            LOAD_ARCORE_FUNC(ArCamera_getTextureIntrinsics);
+            LOAD_ARCORE_FUNC(ArCamera_getImageIntrinsics);
+            LOAD_ARCORE_FUNC(ArCameraIntrinsics_create);
+            LOAD_ARCORE_FUNC(ArCameraIntrinsics_destroy);
+            LOAD_ARCORE_FUNC(ArCameraIntrinsics_getFocalLength);
+            LOAD_ARCORE_FUNC(ArCameraIntrinsics_getPrincipalPoint);
+            LOAD_ARCORE_FUNC(ArCameraIntrinsics_getImageDimensions);
+            LOAD_ARCORE_FUNC(ArConfig_setDepthMode);
+            LOAD_ARCORE_FUNC(ArConfig_getDepthMode);
+            // Para checar suporte no device
+            LOAD_ARCORE_FUNC(ArSession_isDepthModeSupported);
 #undef LOAD_ARCORE_FUNC
 
             LOGI("ARCore library loaded successfully");
@@ -162,6 +190,10 @@ namespace ar {
         void (*ArConfig_destroy)(ArConfig* config) = nullptr;
         void (*ArConfig_setDepthMode)(const ArSession* session, ArConfig* config,
                                       ArDepthMode mode) = nullptr;
+        void (*ArConfig_setPlaneFindingMode)(const ArSession* session, ArConfig* config,
+                                             ArPlaneFindingMode mode) = nullptr;
+        void (*ArConfig_setFlashMode)(const ArSession* session, ArConfig* config,
+                                      ArFlashMode flash_mode) = nullptr;
 
         // ── Frame ──
         ArStatus (*ArFrame_create)(const ArSession* session, ArFrame** out_frame) = nullptr;
@@ -183,6 +215,8 @@ namespace ar {
                                        float* out_col_major_4x4) = nullptr;
         void (*ArCamera_getProjectionMatrix)(const ArSession* session, const ArCamera* camera,
                                              float near, float far, float* dest_col_major_4x4) = nullptr;
+        void (*ArCamera_getPose)(const ArSession* session, const ArCamera* camera,
+                                  ArPose* out_pose) = nullptr;
         void (*ArCamera_getTrackingState)(const ArSession* session, const ArCamera* camera,
                                           ArTrackingState* out_tracking_state) = nullptr;
         void (*ArCamera_release)(ArCamera* camera) = nullptr;
@@ -284,6 +318,24 @@ namespace ar {
         void (*ArFrame_getLightEstimate)(const ArSession* session,
                                          const ArFrame* frame,
                                          ArLightEstimate* out_light_estimate) = nullptr;
+
+        ArStatus (*ArFrame_acquireDepthImage)(const ArSession*, const ArFrame*, ArImage**) = nullptr;
+        ArStatus (*ArFrame_acquireRawDepthImage16Bits)(const ArSession*, const ArFrame*, ArImage**) = nullptr;
+        ArStatus (*ArFrame_acquireRawDepthConfidenceImage)(const ArSession*, const ArFrame*, ArImage**) = nullptr;
+        void (*ArCamera_getTextureIntrinsics)(const ArSession*, const ArCamera*,
+                                              ArCameraIntrinsics* out) = nullptr;
+        void (*ArCamera_getImageIntrinsics)(const ArSession*, const ArCamera*,
+                                            ArCameraIntrinsics* out) = nullptr;
+        void (*ArCameraIntrinsics_create)(const ArSession*, ArCameraIntrinsics**) = nullptr;
+        void (*ArCameraIntrinsics_destroy)(ArCameraIntrinsics*) = nullptr;
+        void (*ArCameraIntrinsics_getFocalLength)(const ArSession*, const ArCameraIntrinsics*,
+                                                  float* out_fx, float* out_fy) = nullptr;
+        void (*ArCameraIntrinsics_getPrincipalPoint)(const ArSession*, const ArCameraIntrinsics*,
+                                                     float* out_cx, float* out_cy) = nullptr;
+        void (*ArCameraIntrinsics_getImageDimensions)(const ArSession*, const ArCameraIntrinsics*,
+                                                      int32_t* out_w, int32_t* out_h) = nullptr;
+        void (*ArConfig_getDepthMode)(const ArSession*, const ArConfig*, ArDepthMode*) = nullptr;
+        ArStatus (*ArSession_isDepthModeSupported)(const ArSession*, ArDepthMode, int32_t* out) = nullptr;
 
     private:
         ARCoreLoader() = default;

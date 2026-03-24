@@ -48,7 +48,7 @@ namespace graphics {
         VkImageView   GetUVImageView(uint32_t index) const;
         uint32_t      GetWidth()  const { return width; }
         uint32_t      GetHeight() const { return height; }
-        bool          IsValid()   const { return valid; }
+        bool          IsValid()   const { return valid && updatedThisFrame; }
 
     private:
         struct FrameResources {
@@ -75,6 +75,7 @@ namespace graphics {
         uint32_t width  = 0;
         uint32_t height = 0;
         bool     valid  = false;
+        bool     updatedThisFrame = false;
 
         utils::RingBuffer<FrameResources> frameResources{MAX_FRAMES_IN_FLIGHT};
 

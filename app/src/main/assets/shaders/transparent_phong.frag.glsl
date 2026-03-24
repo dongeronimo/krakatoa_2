@@ -23,6 +23,8 @@ void main()
     vec4 texColor = texture(texSampler, fragUV);
 
     vec3 N = normalize(fragWorldNormal);
+    // Two-sided lighting: flip normal for back faces so both sides are lit
+    if (!gl_FrontFacing) N = -N;
     vec3 L = normalize(-ubo.lightDir.xyz); // light dir points FROM source, negate for dot product
 
     // Ambient

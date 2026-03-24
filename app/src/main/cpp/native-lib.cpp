@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <string>
+#include <cstring>
 #include <cassert>
 #include <android/native_window_jni.h>
 #include <memory>
@@ -31,6 +32,17 @@
 #include "texture2d.h"
 #include "image_load.h"
 #include <glm/gtc/type_ptr.hpp>
+#include "ar_depth_image.h"
+#include "tsdf_volume.h"
+#include "gpu_mesh.h"
+#include "vk_debug.h"
+#include "marching_cubes_op.h"
+#include "tsdf_volume.h"
+#include "tsdf_fusion_op.h"
+#include "chisel_bridge/chisel_manager.h"
+#include "imgui_integration.h"
+#include "imgui.h"
+std::string gChunkStoragePath;  // app-internal dir for serialized TSDF chunks
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
@@ -53,6 +65,16 @@ int gDisplayRotation = 0;
 std::unique_ptr<graphics::Renderable> cameraBgQuad = nullptr;
 std::unique_ptr<graphics::Renderable> composeQuad = nullptr;
 std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
+std::unique_ptr<graphics::ArDepthImage> gArDepthImage = nullptr;
+std::unique_ptr<graphics::TsdfVolume> gTsdfVolume = nullptr;
+std::unique_ptr<graphics::MutableMesh> gWorldMesh = nullptr;
+// Compute operations (own their pipelines, descriptor layouts, and GPU resources)
+std::unique_ptr<graphics::TsdfFusionOp>        gTsdfFusionOp = nullptr;
+std::unique_ptr<graphics::MarchingCubesOp>     gMarchingCubesOp = nullptr;
+std::unique_ptr<reconstruction::ChiselManager> gChiselManager = nullptr;
+std::unique_ptr<graphics::Texture2D> gMeshTexture = nullptr;
+std::unique_ptr<graphics::Pipeline> gWorldMeshPipeline = nullptr;
+std::unique_ptr<graphics::Renderable> gWorldMeshRenderable = nullptr;
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -60,6 +82,28 @@ Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
     std::string hello = "Hello from C++";
     return env->NewStringUTF(hello.c_str());
 }
+
+void UpdateARPlanes();
+void DrawOffscreenRenderPass(VkCommandBuffer cmd, const uint32_t frameIndex);
+
+/// Extract Context.getFilesDir().getAbsolutePath() via JNI reflection.
+static std::string GetFilesDir(JNIEnv* env, jobject activity) {
+    jclass activityClass = env->GetObjectClass(activity);
+    jmethodID getFilesDir = env->GetMethodID(activityClass, "getFilesDir", "()Ljava/io/File;");
+    jobject fileObj = env->CallObjectMethod(activity, getFilesDir);
+    jclass fileClass = env->GetObjectClass(fileObj);
+    jmethodID getAbsolutePath = env->GetMethodID(fileClass, "getAbsolutePath", "()Ljava/lang/String;");
+    auto jPath = (jstring)env->CallObjectMethod(fileObj, getAbsolutePath);
+    const char* cPath = env->GetStringUTFChars(jPath, nullptr);
+    std::string result(cPath);
+    env->ReleaseStringUTFChars(jPath, cPath);
+    env->DeleteLocalRef(jPath);
+    env->DeleteLocalRef(fileObj);
+    env->DeleteLocalRef(fileClass);
+    env->DeleteLocalRef(activityClass);
+    return result;
+}
+
 extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCreated(JNIEnv *env,
@@ -72,6 +116,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     AAssetManager* nativeAssetManager = AAssetManager_fromJava(env, asset_manager);
     assert(nativeAssetManager!= nullptr);//i MUST have the asset loader
     io::AssetLoader::initialize(nativeAssetManager);
+
+    // Get app-internal storage path for TSDF chunk paging
+    gChunkStoragePath = GetFilesDir(env, activity) + "/tsdf_chunks";
 
     assert(loadedArcore);//i need arcore.
     // Create vulkan context (instance, physical device, device, semaphores, pipelines)
@@ -108,6 +155,16 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .AddDescriptorSetLayout(transPhongDescriptorSetLayout)
             .Build();
     pipelineLayouts.insert({"transparent_phong", transPhongPipelineLayout});
+    // Opaque Phong: UBO only (binding 0, vert+frag) — no texture sampler
+    auto opaquePhongDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
+            .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .Build();
+    descriptorSetLayouts.insert({"opaque_phong", opaquePhongDescriptorSetLayout});
+    auto opaquePhongPipelineLayout = graphics::PipelineLayoutBuilder(gVkContext->GetDevice())
+            .AddDescriptorSetLayout(opaquePhongDescriptorSetLayout)
+            .Build();
+    pipelineLayouts.insert({"opaque_phong", opaquePhongPipelineLayout});
     // Camera background: UBO (binding 0) + Y sampler (binding 1) + UV sampler (binding 2)
     auto cameraBgDescriptorSetLayout = graphics::DescriptorSetLayoutBuilder(gVkContext->GetDevice())
             .AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
@@ -128,6 +185,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
             .AddDescriptorSetLayout(composeDescriptorSetLayout)
             .Build();
     pipelineLayouts.insert({"compose", composePipelineLayout});
+    // Compute operations are created below, after TsdfVolume and GpuMesh.
+    // They own their own descriptor set layouts and pipeline layouts.
+
     ANativeWindow_release(window);
     //Creates the command pool manager
     gCommandPoolManager = std::make_unique<graphics::CommandPoolManager>(gVkContext->GetDevice(),
@@ -195,6 +255,63 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     //camera feed -> vulkan image (ring buffered, CPU upload, no OES)
     gCameraImage = std::make_unique<graphics::ARCameraImage>(gVkContext->GetDevice(),
                                                               gVkContext->GetAllocator());
+    //create the ar depth buffer object
+    gArDepthImage = std::make_unique<graphics::ArDepthImage>(gVkContext->GetDevice(),
+                                                             gVkContext->GetAllocator(),
+                                                             "ArDepthImage");
+
+    // Create CPU-uploaded mesh for OpenChisel output (replaces GpuMesh).
+    gWorldMesh = std::make_unique<graphics::MutableMesh>(gVkContext->GetDevice(),
+                                                          gVkContext->GetAllocator(),
+                                                          *gCommandPoolManager,
+                                                          WORLD_MESH_MAX_VERTICES,
+                                                          WORLD_MESH_MAX_INDICES,
+                                                          "WorldMesh");
+    // OpenChisel-based reconstruction manager (worker thread handles integration)
+    gChiselManager = std::make_unique<reconstruction::ChiselManager>();
+
+    // ── Preserved compute infrastructure (not used for TSDF, kept for future use) ──
+    gTsdfVolume = std::make_unique<graphics::TsdfVolume>(gVkContext->GetDevice(),
+                                                          gVkContext->GetAllocator(),
+                                                          *gCommandPoolManager,
+                                                          "TsdfVolume");
+    // Load mesh texture for the world mesh (transparent phong shading).
+    // Uses textures/mesh.png if available; nullptr triggers a placeholder in the pipeline.
+    if (io::AssetLoader::exists("textures/mesh.png")) {
+        std::vector<uint8_t> pixels;
+        VkFormat fmt;
+        int w, h;
+        io::LoadImage("textures/mesh.png", pixels, fmt, w, h);
+        gMeshTexture = std::make_unique<graphics::Texture2D>(
+                gVkContext->GetDevice(),
+                gVkContext->GetAllocator(),
+                *gCommandPoolManager,
+                pixels,
+                static_cast<uint32_t>(w),
+                static_cast<uint32_t>(h),
+                fmt,
+                "mesh");
+    } else {
+        LOGI("textures/mesh.png not found — world mesh will use placeholder texture");
+    }
+    // Create a renderable for the world mesh (identity transform — mesh is already in world coords)
+    gWorldMeshRenderable = std::make_unique<graphics::Renderable>("world_mesh");
+    gWorldMeshRenderable->SetMesh(gWorldMesh.get());
+
+    // ── Create compute operations ───────────────────────────────────────
+    // Each operation owns its pipeline, descriptor layout, and GPU resources.
+    // They are initialized lazily in nativeOnDrawFrame once depth dimensions
+    // are known (deprojection needs image dimensions to allocate output buffers).
+    graphics::ComputeOperation::InitContext computeCtx{
+        gVkContext->GetDevice(), gVkContext->GetAllocator()
+    };
+    gTsdfFusionOp    = std::make_unique<graphics::TsdfFusionOp>(computeCtx);
+    gMarchingCubesOp = std::make_unique<graphics::MarchingCubesOp>(computeCtx);
+
+    // Wire up static connections (non-owning pointers to shared resources)
+    gTsdfFusionOp->SetVolumeImageView(gTsdfVolume->GetImageView());
+    gMarchingCubesOp->SetVolumeImageView(gTsdfVolume->GetImageView());
+    // Note: gMarchingCubesOp output mesh not wired — world mesh now comes from OpenChisel
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -224,9 +341,17 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
     gTransparentPhongPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
                                                                       gVkContext->GetDevice(),
                                                                       gVkContext->GetAllocator(),
-                                                                      graphics::TransparentPhongConfig(gGridTexture.get()),
+                                                                      graphics::TransparentPhongConfig(gGridTexture.get(),
+                                                                                                       gCommandPoolManager.get()),
                                                                       pipelineLayouts["transparent_phong"],
                                                                       descriptorSetLayouts["transparent_phong"]);
+    // World mesh pipeline: opaque phong with fixed red color for TSDF mesh visualization
+    gWorldMeshPipeline = std::make_unique<graphics::Pipeline>(gOffscreenRenderPass.get(),
+                                                               gVkContext->GetDevice(),
+                                                               gVkContext->GetAllocator(),
+                                                               graphics::OpaquePhongConfig(glm::vec3(1.0f, 0.0f, 0.0f)),
+                                                               pipelineLayouts["opaque_phong"],
+                                                               descriptorSetLayouts["opaque_phong"]);
     gCameraBgPipeline = std::make_unique<graphics::Pipeline>(gSwapChainRenderPass.get(),
                                                               gVkContext->GetDevice(),
                                                               gVkContext->GetAllocator(),
@@ -242,6 +367,25 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceChan
                                                              pipelineLayouts["compose"],
                                                              descriptorSetLayouts["compose"]);
     gFrameSync->RecreateForSwapchain(gVkContext->getSwapchainImageCount());
+
+    // ── ImGui ────────────────────────────────────────────────────────────
+    // (Re-)initialize after swapchain render pass is ready.
+    if (imgui_integration::IsInitialized()) {
+        imgui_integration::Shutdown();
+    }
+    {
+        imgui_integration::InitInfo info{};
+        info.instance       = gVkContext->GetInstance();
+        info.physicalDevice = gVkContext->getPhysicalDevice();
+        info.device         = gVkContext->GetDevice();
+        info.queueFamily    = gVkContext->getQueueFamilies().graphicsFamily.value();
+        info.graphicsQueue  = gVkContext->getGraphicsQueue();
+        info.renderPass     = gSwapChainRenderPass->GetRenderPass();
+        info.imageCount     = gVkContext->getSwapchainImageCount();
+        info.displayWidth   = static_cast<float>(width);
+        info.displayHeight  = static_cast<float>(height);
+        imgui_integration::Init(info);
+    }
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -250,6 +394,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceDest
     vkDeviceWaitIdle(gVkContext->GetDevice());
     gMeshes.clear();
 }
+int32_t previousArDepthWidth = 0;
+uint32_t gFrameCount = 0;  // for throttling compute dispatches
 extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(JNIEnv *env,
@@ -260,6 +406,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     // that command buffers from the oldest in-flight frame are done.
     // Must NOT run during command buffer recording (would destroy bound resources).
     if (gTransparentPhongPipeline) gTransparentPhongPipeline->CollectGarbage();
+    if (gWorldMeshPipeline) gWorldMeshPipeline->CollectGarbage();
     if (gCameraBgPipeline) gCameraBgPipeline->CollectGarbage();
     if (gComposePipeline) gComposePipeline->CollectGarbage();
 
@@ -268,10 +415,6 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     VkSemaphore acquireSem = gFrameSync->GetNextAcquireSemaphore();
     gCommandPoolManager->AdvanceFrame();
     gCameraImage->AdvanceFrame();
-    for(auto p:gArPlanes){
-        //std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
-        ((graphics::MutableMesh*)p.second->GetMesh())->Advance();
-    }
     // Update ARCore first - acquires CPU camera image (YUV planes)
     m_eglDummy.makeCurrent();
     gArSessionManager->onDrawFrame();
@@ -287,86 +430,131 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gCommandPoolManager->BeginFrame();
     VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
     const uint32_t frameIndex = gVkContext->GetFrameIndex();
-    // Update AR planes
-    gArSessionManager->forEachPlane([&](int64_t planeid, const float* modelMat,
-            const float* polygon, int polyFloatCount){
-        // Generate the mesh from the polygon contour (centroid fan)
-        auto meshData = io::GenerateARPlaneMesh(polygon, polyFloatCount, 1.0f);
-        // nothing, leave this functions
-        if (meshData->indices.empty())
-            return;
-        assert(meshData->indexCount > 0);
-        assert(meshData->vertexCount > 0);
-        //TODO: Seek renderables by plane id
-        auto itPlanes = gArPlanes.find(planeid);
-        if(itPlanes == gArPlanes.end()) {
-            //no plane with this id, create a new renderable, with a new mutable mesh and add to the plane.
-            auto name = Concatenate("AR_PLANE ", planeid);
-            std::shared_ptr<graphics::Renderable> newRenderable = std::make_shared<graphics::Renderable>(planeid);
-            graphics::MutableMesh* newMesh = new graphics::MutableMesh(gVkContext->GetDevice(),
-                                                                       gVkContext->GetAllocator(),
-                                                                       *(gCommandPoolManager.get()),
-                                                                       name);
-            newRenderable->SetMesh(newMesh, true);
-            gArPlanes.insert({planeid, newRenderable});
-            newMesh->Advance();
+    /////////////////////////////
+    // ── OpenChisel TSDF reconstruction ──────────────────────────────────
+    // Depth data is sent to the ChiselManager worker thread for integration.
+    // When new mesh data is available, it's uploaded to the MutableMesh.
+    /////////////////////////////
+    // Advance the world mesh ring buffer for this frame
+    gWorldMesh->Advance();
+
+    ArImage* depthImageHandle = gArSessionManager->getDepthImage();
+    if (depthImageHandle != nullptr) {
+        int32_t arDepthWidth = 0, arDepthHeight = 0;
+        gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
+
+        // Lazy-init OpenChisel on first valid depth frame
+        if (!gChiselManager->IsInitialized()) {
+            assert(arDepthWidth > 0 && arDepthHeight > 0 && "Depth image has zero dimensions");
+            gChiselManager->Initialize(
+                0.02f,   // voxelResolution: 2cm voxels (each 16³ chunk = 32cm per side)
+                0.04f,   // truncationDist:  4cm (2× voxel size, tighter surface band)
+                0.10f,   // carvingDist:     10cm (carve zone starts close to surface)
+                true,    // enableCarving
+                16,      // chunkSizeVoxels
+                0,       // threadCount: auto-detect
+                gChunkStoragePath  // disk paging directory
+            );
+            LOGI("[TSDF] Initialized ChiselManager on first depth frame (%dx%d)", arDepthWidth, arDepthHeight);
         }
-        auto planeRenderable = gArPlanes[planeid];
-        //TODO: update the mutable mesh
-        auto mutableMesh = reinterpret_cast<graphics::MutableMesh*>(planeRenderable->GetMesh());
-        mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
-        //TODO: update the model transform of the renderable
-        planeRenderable->GetTransform().SetFromMatrixPtr(modelMat);
-        auto msg = Concatenate("[arplanes] updated plane ", planeid);
-        LOGI("%s", msg.c_str());
-        //Unlike the original function i wrote the dra w is decoupled from the assembly
-        //and data gathering phases, so the drawing will happen later, when i have render passes
-        //and pipelines
-    });
+
+        // Get depth data from ARCore
+        int32_t depthStride = 0;
+        std::vector<uint16_t> depthData{};
+        gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
+        gArSessionManager->releaseDepthImage(depthImageHandle);
+
+        // Diagnostic: check depth data quality
+        static int depthFrameCount = 0;
+        depthFrameCount++;
+        if (depthFrameCount <= 5 || depthFrameCount % 60 == 0) {
+            int nonZero = 0;
+            uint16_t minVal = UINT16_MAX, maxVal = 0;
+            for (uint16_t v : depthData) {
+                if (v > 0) {
+                    nonZero++;
+                    if (v < minVal) minVal = v;
+                    if (v > maxVal) maxVal = v;
+                }
+            }
+            LOGI("[TSDF] depth frame %d: %dx%d, %d/%zu non-zero (%.1f%%), range %u-%u mm",
+                 depthFrameCount, arDepthWidth, arDepthHeight,
+                 nonZero, depthData.size(),
+                 depthData.empty() ? 0.0 : 100.0 * nonZero / depthData.size(),
+                 nonZero > 0 ? (unsigned)minVal : 0u,
+                 nonZero > 0 ? (unsigned)maxVal : 0u);
+        }
+
+        // Get camera intrinsics scaled to depth resolution.
+        // ArCamera_getImageIntrinsics returns values for the full-resolution CPU image
+        // (e.g. 1920x1080), but the depth image is lower-res (e.g. 240x180).
+        // Scale fx/fy/cx/cy by the ratio so they match the depth image pixel grid.
+        ar::ArDepthIntrinsics arDepthIntrinsics{};
+        gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
+        float scaleX = static_cast<float>(arDepthWidth)  / static_cast<float>(arDepthIntrinsics.w);
+        float scaleY = static_cast<float>(arDepthHeight) / static_cast<float>(arDepthIntrinsics.h);
+
+        if (depthFrameCount <= 3) {
+            LOGI("[TSDF] intrinsics: cam(%dx%d) fx=%.1f fy=%.1f cx=%.1f cy=%.1f → depth scale %.3f x %.3f → fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
+                 arDepthIntrinsics.w, arDepthIntrinsics.h,
+                 arDepthIntrinsics.fx, arDepthIntrinsics.fy,
+                 arDepthIntrinsics.cx, arDepthIntrinsics.cy,
+                 scaleX, scaleY,
+                 arDepthIntrinsics.fx * scaleX, arDepthIntrinsics.fy * scaleY,
+                 arDepthIntrinsics.cx * scaleX, arDepthIntrinsics.cy * scaleY);
+        }
+
+        // Get the PHYSICAL (sensor-oriented) view matrix for TSDF integration.
+        // ArCamera_getViewMatrix is display-oriented (rotated to match screen),
+        // but the depth image and ArCamera_getImageIntrinsics are in the
+        // unrotated sensor frame. Using the physical pose from ArCamera_getPose
+        // ensures the view matrix matches the depth data coordinate system.
+        std::array<float, 16> arViewMatrix{};
+        gArSessionManager->getSensorViewMatrix(arViewMatrix.data());
+
+        // Queue frame for async integration (non-blocking)
+        reconstruction::ChiselManager::FrameInput frameInput;
+        frameInput.depthData = std::move(depthData);
+        frameInput.width = arDepthWidth;
+        frameInput.height = arDepthHeight;
+        frameInput.fx = arDepthIntrinsics.fx * scaleX;
+        frameInput.fy = arDepthIntrinsics.fy * scaleY;
+        frameInput.cx = arDepthIntrinsics.cx * scaleX;
+        frameInput.cy = arDepthIntrinsics.cy * scaleY;
+        frameInput.viewMatrix = arViewMatrix;
+        gChiselManager->IntegrateFrame(frameInput);
+    } else {
+        static int depthNullCount = 0;
+        depthNullCount++;
+        if (depthNullCount <= 3 || depthNullCount % 120 == 0) {
+            LOGI("[TSDF] getDepthImage returned nullptr (%d times so far)", depthNullCount);
+        }
+    }
+
+    // Check if worker thread produced a new mesh — upload to GPU if so
+    reconstruction::ChiselManager::MeshOutput meshOut;
+    if (gChiselManager && gChiselManager->PollMesh(meshOut) && !meshOut.indices.empty()) {
+        uint32_t vertCount = static_cast<uint32_t>(meshOut.vertices.size() / 8);
+        uint32_t idxCount = static_cast<uint32_t>(meshOut.indices.size());
+        gWorldMesh->UpdateMesh(meshOut.vertices.data(), vertCount,
+                               meshOut.indices.data(), idxCount);
+        static int meshUploadCount = 0;
+        meshUploadCount++;
+        if (meshUploadCount <= 5 || meshUploadCount % 60 == 0) {
+            LOGI("[TSDF] mesh upload #%d: %u verts, %u indices", meshUploadCount, vertCount, idxCount);
+        }
+    }
+
+    ////////////////////////////
+    // Update AR planes
+    UpdateARPlanes();
+
     // Upload camera feed (YUV->RGBA) into the ring-buffered Vulkan image.
     // After this call the current image is in SHADER_READ_ONLY_OPTIMAL, ready to sample.
     gCameraImage->Update(cmd, gArSessionManager->getCameraFrame());
-    //begin the offscreen render pass
-    gOffscreenRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    gOffscreenRenderPass->AdvanceFrame();
-    gOffscreenRenderPass->Begin(cmd, gOffscreenRenderPass->GetFramebuffer(), gOffscreenRenderPass->GetExtent());
-    // Gather AR light estimation for Phong shading
-    const auto& lightEst = gArSessionManager->getLightEstimate();
-    glm::vec4 lightDir(0.0f, -1.0f, -0.5f, 0.0f);
-    float intensity = lightEst.valid ? lightEst.pixelIntensity : 1.0f;
-    glm::vec4 lightColor(
-        lightEst.valid ? lightEst.colorCorrection[0] : 1.0f,
-        lightEst.valid ? lightEst.colorCorrection[1] : 1.0f,
-        lightEst.valid ? lightEst.colorCorrection[2] : 1.0f,
-        intensity);
-    glm::vec4 ambientColor(0.3f * intensity, 0.3f * intensity, 0.3f * intensity, 1.0f);
+    //The offscreen render pass draws the planes
+    DrawOffscreenRenderPass(cmd, frameIndex);
 
-    // Draw AR planes into the offscreen render target
-    for (const auto& plane : gArPlanes)
-    {
-        graphics::RDO rdo;
-        rdo.Add(graphics::RDO::Keys::MODEL_MAT, plane.second->GetTransform().GetWorldMatrix());
-
-        std::array<float,16> arViewMatrix{};
-        gArSessionManager->getViewMatrix(arViewMatrix.data());
-        glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
-        rdo.Add(graphics::RDO::Keys::VIEW_MAT, viewMat);
-
-        std::array<float,16> arProjMatrix{};
-        gArSessionManager->getProjectionMatrix(0.01f, 100.f, arProjMatrix.data());
-        glm::mat4 projMat = glm::make_mat4(arProjMatrix.data());
-        rdo.Add(graphics::RDO::Keys::PROJ_MAT, projMat);
-
-        rdo.Add(graphics::RDO::Keys::LIGHT_DIR, lightDir);
-        rdo.Add(graphics::RDO::Keys::LIGHT_COLOR, lightColor);
-        rdo.Add(graphics::RDO::Keys::AMBIENT_COLOR, ambientColor);
-
-        gTransparentPhongPipeline->Bind(cmd);
-        gTransparentPhongPipeline->Draw(cmd, &rdo, plane.second.get(), frameIndex);
-        auto msg = Concatenate("[arplanes] drew plane ", plane.second->GetId());
-        LOGI("%s", msg.c_str());
-    }
-    gOffscreenRenderPass->End(cmd);
     //begin the swap chain render pass
     gSwapChainRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     gSwapChainRenderPass->Begin(cmd,
@@ -380,6 +568,12 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     // Composite offscreen render target (AR planes) over the camera background
     gComposePipeline->Bind(cmd);
     gComposePipeline->Draw(cmd, nullptr, composeQuad.get(), frameIndex);
+
+    // ── ImGui overlay ────────────────────────────────────────────────────
+    imgui_integration::NewFrame(gFrameTimer->GetDeltaTime());
+    ImGui::ShowDemoWindow();   // TODO: replace with app UI
+    imgui_integration::Render(cmd);
+
     gSwapChainRenderPass->End(cmd);
     gCommandPoolManager->EndFrame();
 
@@ -419,6 +613,7 @@ JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEnv *env,
                                                                            jobject thiz) {
     vkDeviceWaitIdle(gVkContext->GetDevice());
+    imgui_integration::Shutdown();
     gCameraImage = nullptr;
     gArSessionManager.release();
     gMeshes.clear();
@@ -430,10 +625,19 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeCleanup(JNIEn
     {
         vkDestroyPipelineLayout(gVkContext->GetDevice(), value, nullptr);
     }
+    // Destroy compute operations before their shared resources (TsdfVolume, GpuMesh)
+    gMarchingCubesOp = nullptr;
+    gTsdfFusionOp    = nullptr;
+    gWorldMesh = nullptr;
+    gTsdfVolume = nullptr;
+    gArDepthImage = nullptr;
+    gWorldMeshRenderable = nullptr;
     gComposePipeline = nullptr;
     gCameraBgPipeline = nullptr;
+    gWorldMeshPipeline = nullptr;
     gTransparentPhongPipeline = nullptr;
     gUnshadedOpaquePipeline = nullptr;
+    gMeshTexture = nullptr;
     gGridTexture = nullptr;
     gCommandPoolManager = nullptr;
     gFrameSync = nullptr;
@@ -457,7 +661,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnPause(JNIEn
     if (gFrameTimer) {
         gFrameTimer->Pause();
     }
-    gArSessionManager->onPause();
+    if (gArSessionManager)
+        gArSessionManager->onPause();
 }
 extern "C"
 JNIEXPORT void JNICALL
@@ -473,7 +678,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnTouchEvent(
                                                                                 jobject thiz,
                                                                                 jfloat x, jfloat y,
                                                                                 jint action) {
-    // TODO: implement nativeOnTouchEvent()
+    imgui_integration::OnTouchEvent(x, y, action);
 }
 extern "C"
 JNIEXPORT jintArray JNICALL
@@ -505,4 +710,116 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeSetResolution
         JNIEnv *env, jobject thiz, jint index) {
     if (!gArSessionManager) return JNI_FALSE;
     return gArSessionManager->setResolution(index) ? JNI_TRUE : JNI_FALSE;
+}
+
+void UpdateARPlanes() {
+    for(auto p:gArPlanes){
+        //std::unordered_map<int64_t, std::shared_ptr<graphics::Renderable>> gArPlanes;
+        ((graphics::MutableMesh*)p.second->GetMesh())->Advance();
+    }
+    gArSessionManager->forEachPlane([&](int64_t planeid, const float* modelMat,
+                                        const float* polygon, int polyFloatCount){
+        // Generate the mesh from the polygon contour (centroid fan)
+        auto meshData = io::GenerateARPlaneMesh(polygon, polyFloatCount, 1.0f);
+        // nothing, leave this functions
+        if (meshData->indices.empty())
+            return;
+        assert(meshData->indexCount > 0);
+        assert(meshData->vertexCount > 0);
+        //TODO: Seek renderables by plane id
+        auto itPlanes = gArPlanes.find(planeid);
+        if(itPlanes == gArPlanes.end()) {
+            //no plane with this id, create a new renderable, with a new mutable mesh and add to the plane.
+            auto name = Concatenate("AR_PLANE ", planeid);
+            std::shared_ptr<graphics::Renderable> newRenderable = std::make_shared<graphics::Renderable>(planeid);
+            graphics::MutableMesh* newMesh = new graphics::MutableMesh(gVkContext->GetDevice(),
+                                                                       gVkContext->GetAllocator(),
+                                                                       *(gCommandPoolManager.get()),
+                                                                       graphics::MutableMesh::DEFAULT_MAX_VERTS,
+                                                                       graphics::MutableMesh::DEFAULT_MAX_INDICES,
+                                                                       name);
+            newRenderable->SetMesh(newMesh, true);
+            gArPlanes.insert({planeid, newRenderable});
+            newMesh->Advance();
+        }
+        auto planeRenderable = gArPlanes[planeid];
+        //TODO: update the mutable mesh
+        auto mutableMesh = reinterpret_cast<graphics::MutableMesh*>(planeRenderable->GetMesh());
+        mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
+        //TODO: update the model transform of the renderable
+        planeRenderable->GetTransform().SetFromMatrixPtr(modelMat);
+        auto msg = Concatenate("[arplanes] updated plane ", planeid);
+        LOGI("%s", msg.c_str());
+        //Unlike the original function i wrote the dra w is decoupled from the assembly
+        //and data gathering phases, so the drawing will happen later, when i have render passes
+        //and pipelines
+    });
+}
+
+void DrawOffscreenRenderPass(VkCommandBuffer cmd, const uint32_t frameIndex){
+    //begin the offscreen render pass
+    gOffscreenRenderPass->setClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    gOffscreenRenderPass->AdvanceFrame();
+    gOffscreenRenderPass->Begin(cmd, gOffscreenRenderPass->GetFramebuffer(), gOffscreenRenderPass->GetExtent());
+    // Gather AR light estimation for Phong shading
+    const auto& lightEst = gArSessionManager->getLightEstimate();
+    glm::vec4 lightDir(0.0f, -1.0f, -0.5f, 0.0f);
+    float intensity = lightEst.valid ? lightEst.pixelIntensity : 1.0f;
+    glm::vec4 lightColor(
+            lightEst.valid ? lightEst.colorCorrection[0] : 1.0f,
+            lightEst.valid ? lightEst.colorCorrection[1] : 1.0f,
+            lightEst.valid ? lightEst.colorCorrection[2] : 1.0f,
+            intensity);
+    glm::vec4 ambientColor(0.3f * intensity, 0.3f * intensity, 0.3f * intensity, 1.0f);
+
+    // Draw AR planes into the offscreen render target
+    for (const auto& plane : gArPlanes)
+    {
+        graphics::RDO rdo;
+        rdo.Add(graphics::RDO::Keys::MODEL_MAT, plane.second->GetTransform().GetWorldMatrix());
+
+        std::array<float,16> arViewMatrix{};
+        gArSessionManager->getViewMatrix(arViewMatrix.data());
+        glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
+        rdo.Add(graphics::RDO::Keys::VIEW_MAT, viewMat);
+
+        std::array<float,16> arProjMatrix{};
+        gArSessionManager->getProjectionMatrix(0.01f, 100.f, arProjMatrix.data());
+        glm::mat4 projMat = glm::make_mat4(arProjMatrix.data());
+        rdo.Add(graphics::RDO::Keys::PROJ_MAT, projMat);
+
+        rdo.Add(graphics::RDO::Keys::LIGHT_DIR, lightDir);
+        rdo.Add(graphics::RDO::Keys::LIGHT_COLOR, lightColor);
+        rdo.Add(graphics::RDO::Keys::AMBIENT_COLOR, ambientColor);
+
+        gTransparentPhongPipeline->Bind(cmd);
+        gTransparentPhongPipeline->Draw(cmd, &rdo, plane.second.get(), frameIndex);
+        auto msg = Concatenate("[arplanes] drew plane ", plane.second->GetId());
+        LOGI("%s", msg.c_str());
+    }
+    // Draw the reconstructed world mesh (marching cubes output)
+    // Note: index count is checked GPU-side via indirect draw, not CPU-side
+    if (gWorldMeshPipeline && gWorldMeshRenderable && gWorldMesh) {
+        graphics::RDO rdo;
+        // Identity model matrix — mesh is already in world coordinates
+        rdo.Add(graphics::RDO::Keys::MODEL_MAT, glm::mat4(1.0f));
+
+        std::array<float,16> arViewMatrix{};
+        gArSessionManager->getViewMatrix(arViewMatrix.data());
+        glm::mat4 viewMat = glm::make_mat4(arViewMatrix.data());
+        rdo.Add(graphics::RDO::Keys::VIEW_MAT, viewMat);
+
+        std::array<float,16> arProjMatrix{};
+        gArSessionManager->getProjectionMatrix(0.01f, 100.f, arProjMatrix.data());
+        glm::mat4 projMat = glm::make_mat4(arProjMatrix.data());
+        rdo.Add(graphics::RDO::Keys::PROJ_MAT, projMat);
+
+        rdo.Add(graphics::RDO::Keys::LIGHT_DIR, lightDir);
+        rdo.Add(graphics::RDO::Keys::LIGHT_COLOR, lightColor);
+        rdo.Add(graphics::RDO::Keys::AMBIENT_COLOR, ambientColor);
+
+        gWorldMeshPipeline->Bind(cmd);
+        gWorldMeshPipeline->Draw(cmd, &rdo, gWorldMeshRenderable.get(), frameIndex);
+    }
+    gOffscreenRenderPass->End(cmd);
 }

@@ -1,0 +1,27 @@
+diff --git a/open_chisel/include/open_chisel/DistVoxel.h b/open_chisel/include/open_chisel/DistVoxel.h
+index 1234567..abcdefg 100644
+--- a/open_chisel/include/open_chisel/DistVoxel.h
++++ b/open_chisel/include/open_chisel/DistVoxel.h
+@@ -59,8 +59,7 @@ namespace chisel
+
+             inline void Carve()
+             {
+-                //Reset();
+-                Integrate(0.0, 1.5);
++                Reset();
+             }
+
+             inline void Reset()
+diff --git a/open_chisel/include/open_chisel/ProjectionIntegrator.h b/open_chisel/include/open_chisel/ProjectionIntegrator.h
+index 1234567..abcdefg 100644
+--- a/open_chisel/include/open_chisel/ProjectionIntegrator.h
++++ b/open_chisel/include/open_chisel/ProjectionIntegrator.h
+@@ -94,7 +94,7 @@ namespace chisel
+                     else if (enableVoxelCarving && surfaceDist > truncation + carvingDist)
+                     {
+                         DistVoxel& voxel = chunk->GetDistVoxelMutable(i);
+-                        if (voxel.GetWeight() > 0 && voxel.GetSDF() < 1e-5)
++                        if (voxel.GetWeight() > 0)
+                         {
+                             voxel.Carve();
+                             updated = true;
