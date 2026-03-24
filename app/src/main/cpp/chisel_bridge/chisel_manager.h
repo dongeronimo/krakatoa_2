@@ -55,8 +55,8 @@ namespace reconstruction {
         /// threadCount=0 → auto-detect: max(1, hardware_concurrency / 2)
         /// storagePath: directory for serialized TSDF chunks (disk paging)
         void Initialize(float voxelResolution = 0.02f,
-                        float truncationDist = 0.06f,
-                        float carvingDist = 0.30f,
+                        float truncationDist = 0.04f,
+                        float carvingDist = 0.10f,
                         bool enableCarving = true,
                         int chunkSizeVoxels = 16,
                         int threadCount = 0,
@@ -123,7 +123,7 @@ namespace reconstruction {
         /// How many TSDF integrations to run before extracting a new mesh.
         /// Lower = more responsive visuals but slower integration throughput.
         /// Higher = faster convergence & carving but choppier mesh updates.
-        static constexpr int MESH_EVERY_N_INTEGRATIONS = 10;
+        static constexpr int MESH_EVERY_N_INTEGRATIONS = 3;
 
         int integrationsSinceMesh_ = 0;
 
