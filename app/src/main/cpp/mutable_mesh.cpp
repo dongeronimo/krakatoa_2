@@ -90,8 +90,14 @@ void graphics::MutableMesh::AllocateSlotBuffers(int slot) {
 
 void graphics::MutableMesh::UpdateMesh(const float* verts, uint32_t vc,
                                        const uint32_t* idx, uint32_t ic) {
-    assert(vc <= maxNumOfVerts_ && "UpdateMesh: vertex count exceeds maxNumOfVerts");
-    assert(ic <= maxNumOfIndices_ && "UpdateMesh: index count exceeds maxNumOfIndices");
+    if (vc > maxNumOfVerts_) {
+        LOGI("UpdateMesh WARNING: vertex count %u exceeds max %u — clamping", vc, maxNumOfVerts_);
+        vc = maxNumOfVerts_;
+    }
+    if (ic > maxNumOfIndices_) {
+        LOGI("UpdateMesh WARNING: index count %u exceeds max %u — clamping", ic, maxNumOfIndices_);
+        ic = maxNumOfIndices_;
+    }
 
     size_t vertFloats = static_cast<size_t>(vc) * 8;
     size_t vertBytes = vertFloats * sizeof(float);

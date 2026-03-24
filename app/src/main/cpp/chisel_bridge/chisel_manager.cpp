@@ -441,38 +441,51 @@ namespace reconstruction {
         Eigen::Vector3i chunkSize = chunkMgr.GetChunkSize();
         Eigen::Vector3f halfChunk = chunkSize.cast<float>() * resolution * 0.5f;
 
-        // First pass: count vertices/indices for visible chunks only
-        size_t totalVerts = 0, totalIndices = 0;
+        // Collect visible chunks with distance, so we can sort nearest-first
+        // and stop when the vertex budget is reached.
+        struct VisibleChunk {
+            chisel::ChunkID id;
+            float distSq;
+        };
+        std::vector<VisibleChunk> visible;
+        visible.reserve(allMeshes.size());
+
         for (const auto& pair : allMeshes) {
             if (!pair.second || !pair.second->HasVertices()) continue;
 
-            // Distance-based culling: skip chunks outside consolidation radius
             Eigen::Vector3f origin = pair.first.cast<float>().cwiseProduct(
                     chunkSize.cast<float>()) * resolution;
             Eigen::Vector3f center = origin + halfChunk;
             float distSq = (center - cameraPos).squaredNorm();
             if (distSq > CONSOLIDATION_RADIUS_SQ) continue;
 
-            totalVerts += pair.second->vertices.size();
-            totalIndices += pair.second->indices.size();
+            visible.push_back({pair.first, distSq});
         }
-        out.vertices.reserve(totalVerts * 8);  // 8 floats per vertex
-        out.indices.reserve(totalIndices);
 
+        // Sort nearest-first so the vertex budget prioritises close geometry
+        std::sort(visible.begin(), visible.end(),
+                  [](const VisibleChunk& a, const VisibleChunk& b) { return a.distSq < b.distSq; });
+
+        // Vertex budget: leave 5% headroom below the Vulkan buffer limit
+        static constexpr uint32_t VERTEX_BUDGET = static_cast<uint32_t>(WORLD_MESH_MAX_VERTICES * 0.95);
         uint32_t vertexOffset = 0;
-        for (const auto& pair : allMeshes) {
-            const auto& mesh = pair.second;
+
+        for (const auto& vc : visible) {
+            auto it = allMeshes.find(vc.id);
+            if (it == allMeshes.end()) continue;
+            const auto& mesh = it->second;
             if (!mesh || !mesh->HasVertices()) continue;
 
-            // Distance-based culling (same check as above)
-            Eigen::Vector3f origin = pair.first.cast<float>().cwiseProduct(
-                    chunkSize.cast<float>()) * resolution;
-            Eigen::Vector3f center = origin + halfChunk;
-            float distSq = (center - cameraPos).squaredNorm();
-            if (distSq > CONSOLIDATION_RADIUS_SQ) continue;
+            size_t numVerts = mesh->vertices.size();
+
+            // Stop if adding this chunk would exceed the vertex budget
+            if (vertexOffset + numVerts > VERTEX_BUDGET) {
+                LOGI("[TSDF] ConsolidateChunkMeshes: vertex budget reached (%u / %u), skipping %zu remaining chunks",
+                     vertexOffset, VERTEX_BUDGET, visible.size() - (&vc - visible.data()));
+                break;
+            }
 
             bool hasNormals = mesh->HasNormals();
-            size_t numVerts = mesh->vertices.size();
 
             for (size_t i = 0; i < numVerts; i++) {
                 const auto& pos = mesh->vertices[i];
