@@ -54,7 +54,7 @@ namespace reconstruction {
         /// Call once when depth image dimensions are first known.
         /// threadCount=0 → auto-detect: max(1, hardware_concurrency / 2)
         /// storagePath: directory for serialized TSDF chunks (disk paging)
-        void Initialize(float voxelResolution = 0.01f,
+        void Initialize(float voxelResolution = 0.02f,
                         float truncationDist = 0.04f,
                         float carvingDist = 0.04f,
                         bool enableCarving = true,
@@ -113,7 +113,7 @@ namespace reconstruction {
         static constexpr int MAX_RELOAD_PER_FRAME = 5;
 
         float truncation_ = 0.10f;  // stored from Initialize()
-        float voxelResolution_ = 0.01f;
+        float voxelResolution_ = 0.02f;
         int chunkSizeVoxels_ = 16;
 
         /// How many TSDF integrations to run before extracting a new mesh.
