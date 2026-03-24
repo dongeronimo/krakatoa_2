@@ -498,13 +498,21 @@ namespace ar {
     /// Caller must release the returned ArImage via releaseDepthImage().
     ArImage* ARSessionManager::getDepthImage() {
         if (!m_isTracking) {
+            static int notTrackingCount = 0;
+            notTrackingCount++;
+            if (notTrackingCount <= 3 || notTrackingCount % 120 == 0) {
+                LOGW("[TSDF] getDepthImage: not tracking (%d times)", notTrackingCount);
+            }
             return nullptr;
         }
         ArImage* depthImage = nullptr;
         ArStatus status = m_loader.ArFrame_acquireDepthImage16Bits(m_session, m_frame, &depthImage);
         if (status != AR_SUCCESS) {
-            if (status != AR_ERROR_NOT_YET_AVAILABLE) {
-                LOGE("ArFrame_acquireDepthImage16Bits failed: %d", status);
+            static int acquireFailCount = 0;
+            acquireFailCount++;
+            if (acquireFailCount <= 3 || acquireFailCount % 120 == 0) {
+                LOGW("[TSDF] acquireDepthImage16Bits failed: status=%d (%d times)",
+                     status, acquireFailCount);
             }
             return nullptr;
         }
