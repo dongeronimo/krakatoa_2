@@ -8,6 +8,7 @@
 
 add_library(chisel_bridge STATIC
         chisel_manager.cpp
+        chunk_serializer.cpp
 )
 
 # Own headers (chisel_manager.h, thread_event.h)

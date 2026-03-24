@@ -23,7 +23,8 @@ namespace reconstruction {
                                    float carvingDist,
                                    bool enableCarving,
                                    int chunkSizeVoxels,
-                                   int threadCount) {
+                                   int threadCount,
+                                   const std::string& storagePath) {
         if (initialized_) return;
 
         // Auto-detect thread count: use half the available cores
@@ -44,6 +45,8 @@ namespace reconstruction {
         // The centroids are the 3D positions of each voxel center within a canonical chunk.
         // Without these, the integrator's inner loop is empty and no voxels get updated.
         truncation_ = truncationDist;
+        voxelResolution_ = voxelResolution;
+        chunkSizeVoxels_ = chunkSizeVoxels;
         auto truncator = std::make_shared<chisel::ConstantTruncator>(truncationDist);
         auto weighter = std::make_shared<chisel::ConstantWeighter>(1.0f);
 
@@ -53,6 +56,15 @@ namespace reconstruction {
         integrator_ = chisel::ProjectionIntegrator(truncator, weighter,
                                                     carvingDist, enableCarving,
                                                     centroids);
+
+        // Initialize disk paging if storage path is provided
+        if (!storagePath.empty()) {
+            serializer_ = std::make_unique<ChunkSerializer>(storagePath);
+            LOGI("ChiselManager: disk paging enabled at %s (%zu existing chunks)",
+                 storagePath.c_str(), serializer_->DiskChunkCount());
+        } else {
+            LOGI("ChiselManager: disk paging disabled (no storage path)");
+        }
 
         // Start worker thread
         running_ = true;
@@ -122,7 +134,11 @@ namespace reconstruction {
             if (shouldReset && chisel_) {
                 chisel_->Reset();
                 integrationsSinceMesh_ = 0;
-                LOGI("ChiselManager: volume reset");
+                // Clear all serialized chunks on reset
+                if (serializer_) {
+                    serializer_->DeleteAll();
+                }
+                LOGI("ChiselManager: volume reset (disk chunks cleared)");
             }
 
             // Grab the latest input and process it
@@ -211,9 +227,12 @@ namespace reconstruction {
 
         size_t chunksAfter = chisel_->GetChunkManager().GetChunks().size();
 
-        // Prune distant chunks if we're over budget
+        // Prune distant chunks if we're over budget (serializes to disk first)
         Eigen::Vector3f camPos = cameraPose.translation();
         PruneDistantChunks(camPos);
+
+        // Reload nearby chunks from disk (if paging is enabled)
+        ReloadNearbyChunks(camPos);
 
         integrationsSinceMesh_++;
 
@@ -234,7 +253,7 @@ namespace reconstruction {
             auto t3 = std::chrono::steady_clock::now();
 
             MeshOutput meshOut;
-            ConsolidateChunkMeshes(meshOut);
+            ConsolidateChunkMeshes(meshOut, camPos);
             auto t4 = std::chrono::steady_clock::now();
 
             long meshMs = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
@@ -263,8 +282,9 @@ namespace reconstruction {
             uint32_t numVerts = static_cast<uint32_t>(meshOut.vertices.size() / 8);
             uint32_t numTris = static_cast<uint32_t>(meshOut.indices.size() / 3);
             Eigen::Vector3f cp = cameraPose.translation();
-            LOGI("[TSDF] frame %d MESH — %zu chunks (%zu→%zu), %u verts, %u tris | integrate=%ldms mesh=%ldms consolidate=%ldms | far=%.2f | cam=(%.2f,%.2f,%.2f)",
-                 frameCount, numChunks, chunksBefore, chunksAfter, numVerts, numTris,
+            size_t diskChunks = serializer_ ? serializer_->DiskChunkCount() : 0;
+            LOGI("[TSDF] frame %d MESH — %zu chunks (ram) + %zu (disk), %u verts, %u tris | integrate=%ldms mesh=%ldms consolidate=%ldms | far=%.2f | cam=(%.2f,%.2f,%.2f)",
+                 frameCount, numChunks, diskChunks, numVerts, numTris,
                  integrateMs, meshMs, consolidateMs,
                  effectiveFar,
                  cp.x(), cp.y(), cp.z());
@@ -272,9 +292,10 @@ namespace reconstruction {
             // Log every integration so we can see if the worker is alive
             size_t numChunks = chisel_->GetChunkManager().GetChunks().size();
             Eigen::Vector3f cp = cameraPose.translation();
-            LOGI("[TSDF] frame %d (%d/%d) — %zu chunks (%zu→%zu) | integrate=%ldms | far=%.2f | cam=(%.2f,%.2f,%.2f)",
+            size_t diskChunks = serializer_ ? serializer_->DiskChunkCount() : 0;
+            LOGI("[TSDF] frame %d (%d/%d) — %zu chunks (ram) + %zu (disk) | integrate=%ldms | far=%.2f | cam=(%.2f,%.2f,%.2f)",
                  frameCount, integrationsSinceMesh_, MESH_EVERY_N_INTEGRATIONS,
-                 numChunks, chunksBefore, chunksAfter,
+                 numChunks, diskChunks,
                  integrateMs,
                  effectiveFar,
                  cp.x(), cp.y(), cp.z());
@@ -312,32 +333,128 @@ namespace reconstruction {
         std::sort(chunkDists.begin(), chunkDists.end(),
                   [](const ChunkDist& a, const ChunkDist& b) { return a.distSq > b.distSq; });
 
-        // Remove farthest chunks until we're back at MAX_CHUNKS
+        // Remove farthest chunks until we're back at MAX_CHUNKS.
+        // If disk paging is enabled, serialize before removing.
         size_t toRemove = numChunks - MAX_CHUNKS;
         size_t removed = 0;
+        size_t serialized = 0;
         for (size_t i = 0; i < toRemove && i < chunkDists.size(); i++) {
-            chunkMgr.RemoveChunk(chunkDists[i].id);
+            const chisel::ChunkID& id = chunkDists[i].id;
+
+            // Serialize to disk before removing (if paging is enabled)
+            if (serializer_) {
+                chisel::ChunkPtr chunk = chunkMgr.GetChunk(id);
+                if (chunk && serializer_->SaveChunk(chunk)) {
+                    serialized++;
+                }
+            }
+
+            chunkMgr.RemoveChunk(id);
             removed++;
         }
 
         if (removed > 0) {
-            LOGI("ChiselManager: pruned %zu distant chunks (%zu → %zu)",
-                 removed, numChunks, numChunks - removed);
+            LOGI("ChiselManager: pruned %zu distant chunks (%zu → %zu), %zu serialized to disk",
+                 removed, numChunks, numChunks - removed, serialized);
         }
     }
 
-    void ChiselManager::ConsolidateChunkMeshes(MeshOutput& out) {
+    void ChiselManager::ReloadNearbyChunks(const Eigen::Vector3f& cameraPos) {
+        if (!serializer_ || serializer_->DiskChunkCount() == 0) return;
+
+        auto& chunkMgr = chisel_->GetMutableChunkManager();
+
+        // Don't reload if we're already near the RAM budget
+        if (chunkMgr.GetChunks().size() >= MAX_CHUNKS - MAX_RELOAD_PER_FRAME) return;
+        float resolution = chunkMgr.GetResolution();
+        Eigen::Vector3i chunkSize = chunkMgr.GetChunkSize();
+        Eigen::Vector3f halfChunk = chunkSize.cast<float>() * resolution * 0.5f;
+        float chunkWorldSize = chunkSize.x() * resolution;  // assumes cubic chunks
+
+        // Determine the range of chunk grid coordinates within the reload radius
+        int radiusInChunks = static_cast<int>(std::ceil(RELOAD_RADIUS / chunkWorldSize));
+        chisel::ChunkID camChunk = chunkMgr.GetIDAt(cameraPos);
+
+        int reloaded = 0;
+        chisel::ChunkSet reloadedSet;
+
+        for (int dx = -radiusInChunks; dx <= radiusInChunks && reloaded < MAX_RELOAD_PER_FRAME; dx++) {
+            for (int dy = -radiusInChunks; dy <= radiusInChunks && reloaded < MAX_RELOAD_PER_FRAME; dy++) {
+                for (int dz = -radiusInChunks; dz <= radiusInChunks && reloaded < MAX_RELOAD_PER_FRAME; dz++) {
+                    chisel::ChunkID id(camChunk.x() + dx, camChunk.y() + dy, camChunk.z() + dz);
+
+                    // Skip if already in RAM
+                    if (chunkMgr.HasChunk(id)) continue;
+
+                    // Skip if not on disk
+                    if (!serializer_->HasChunk(id)) continue;
+
+                    // Distance check
+                    Eigen::Vector3f origin = id.cast<float>().cwiseProduct(
+                            chunkSize.cast<float>()) * resolution;
+                    Eigen::Vector3f center = origin + halfChunk;
+                    float distSq = (center - cameraPos).squaredNorm();
+                    if (distSq > RELOAD_RADIUS_SQ) continue;
+
+                    // Load from disk
+                    Eigen::Vector3i nv(chunkSizeVoxels_, chunkSizeVoxels_, chunkSizeVoxels_);
+                    chisel::ChunkPtr chunk = serializer_->LoadChunk(id, voxelResolution_, nv, false);
+                    if (!chunk) continue;
+
+                    // Insert into the live chunk manager
+                    chunkMgr.AddChunk(chunk);
+
+                    // Mark for mesh regeneration (marching cubes)
+                    reloadedSet[id] = true;
+                    // Also mark neighbors so border geometry is seamless
+                    for (int nx = -1; nx <= 1; nx++) {
+                        for (int ny = -1; ny <= 1; ny++) {
+                            for (int nz = -1; nz <= 1; nz++) {
+                                chisel::ChunkID neighbor(id.x() + nx, id.y() + ny, id.z() + nz);
+                                if (chunkMgr.HasChunk(neighbor)) {
+                                    reloadedSet[neighbor] = true;
+                                }
+                            }
+                        }
+                    }
+
+                    reloaded++;
+                }
+            }
+        }
+
+        if (reloaded > 0) {
+            // Generate meshes for reloaded chunks (and their neighbors)
+            chunkMgr.RecomputeMeshes(reloadedSet);
+            LOGI("ChiselManager: reloaded %d chunks from disk, meshed %zu",
+                 reloaded, reloadedSet.size());
+        }
+    }
+
+    void ChiselManager::ConsolidateChunkMeshes(MeshOutput& out, const Eigen::Vector3f& cameraPos) {
         out.vertices.clear();
         out.indices.clear();
 
-        const auto& allMeshes = chisel_->GetChunkManager().GetAllMeshes();
-        // Pre-estimate capacity
+        const auto& chunkMgr = chisel_->GetChunkManager();
+        const auto& allMeshes = chunkMgr.GetAllMeshes();
+        float resolution = chunkMgr.GetResolution();
+        Eigen::Vector3i chunkSize = chunkMgr.GetChunkSize();
+        Eigen::Vector3f halfChunk = chunkSize.cast<float>() * resolution * 0.5f;
+
+        // First pass: count vertices/indices for visible chunks only
         size_t totalVerts = 0, totalIndices = 0;
         for (const auto& pair : allMeshes) {
-            if (pair.second && pair.second->HasVertices()) {
-                totalVerts += pair.second->vertices.size();
-                totalIndices += pair.second->indices.size();
-            }
+            if (!pair.second || !pair.second->HasVertices()) continue;
+
+            // Distance-based culling: skip chunks outside consolidation radius
+            Eigen::Vector3f origin = pair.first.cast<float>().cwiseProduct(
+                    chunkSize.cast<float>()) * resolution;
+            Eigen::Vector3f center = origin + halfChunk;
+            float distSq = (center - cameraPos).squaredNorm();
+            if (distSq > CONSOLIDATION_RADIUS_SQ) continue;
+
+            totalVerts += pair.second->vertices.size();
+            totalIndices += pair.second->indices.size();
         }
         out.vertices.reserve(totalVerts * 8);  // 8 floats per vertex
         out.indices.reserve(totalIndices);
@@ -346,6 +463,13 @@ namespace reconstruction {
         for (const auto& pair : allMeshes) {
             const auto& mesh = pair.second;
             if (!mesh || !mesh->HasVertices()) continue;
+
+            // Distance-based culling (same check as above)
+            Eigen::Vector3f origin = pair.first.cast<float>().cwiseProduct(
+                    chunkSize.cast<float>()) * resolution;
+            Eigen::Vector3f center = origin + halfChunk;
+            float distSq = (center - cameraPos).squaredNorm();
+            if (distSq > CONSOLIDATION_RADIUS_SQ) continue;
 
             bool hasNormals = mesh->HasNormals();
             size_t numVerts = mesh->vertices.size();

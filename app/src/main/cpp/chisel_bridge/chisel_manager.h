@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdint>
 #include "thread_event.h"
+#include "chunk_serializer.h"
 #include <open_chisel/Chisel.h>
 #include <open_chisel/camera/PinholeCamera.h>
 #include <open_chisel/camera/DepthImage.h>
@@ -52,12 +53,14 @@ namespace reconstruction {
 
         /// Call once when depth image dimensions are first known.
         /// threadCount=0 → auto-detect: max(1, hardware_concurrency / 2)
+        /// storagePath: directory for serialized TSDF chunks (disk paging)
         void Initialize(float voxelResolution = 0.01f,
                         float truncationDist = 0.04f,
                         float carvingDist = 0.04f,
                         bool enableCarving = true,
                         int chunkSizeVoxels = 16,
-                        int threadCount = 0);
+                        int threadCount = 0,
+                        const std::string& storagePath = "");
 
         bool IsInitialized() const { return initialized_; }
 
@@ -92,8 +95,26 @@ namespace reconstruction {
         std::condition_variable cv_;
         std::atomic<bool> running_{false};
 
+        /// Maximum number of chunks kept in RAM (CPU budget).
         static constexpr size_t MAX_CHUNKS = 8000;
+
+        /// Maximum distance (meters) from camera for chunks to be included in
+        /// the consolidated mesh sent to the GPU. Chunks beyond this radius
+        /// are still in RAM but not rendered — saves GPU bandwidth.
+        static constexpr float CONSOLIDATION_RADIUS = 3.0f;
+        static constexpr float CONSOLIDATION_RADIUS_SQ = CONSOLIDATION_RADIUS * CONSOLIDATION_RADIUS;
+
+        /// Radius within which serialized (on-disk) chunks are reloaded into RAM.
+        /// Must be smaller than the effective prune distance to avoid thrashing.
+        static constexpr float RELOAD_RADIUS = 2.5f;
+        static constexpr float RELOAD_RADIUS_SQ = RELOAD_RADIUS * RELOAD_RADIUS;
+
+        /// Maximum number of chunks to reload from disk per integration frame.
+        static constexpr int MAX_RELOAD_PER_FRAME = 5;
+
         float truncation_ = 0.10f;  // stored from Initialize()
+        float voxelResolution_ = 0.01f;
+        int chunkSizeVoxels_ = 16;
 
         /// How many TSDF integrations to run before extracting a new mesh.
         /// Lower = more responsive visuals but slower integration throughput.
@@ -102,10 +123,14 @@ namespace reconstruction {
 
         int integrationsSinceMesh_ = 0;
 
+        // Disk paging
+        std::unique_ptr<ChunkSerializer> serializer_;
+
         void WorkerLoop();
         void ProcessFrame(const FrameInput& input);
         void PruneDistantChunks(const Eigen::Vector3f& cameraPos);
-        void ConsolidateChunkMeshes(MeshOutput& out);
+        void ReloadNearbyChunks(const Eigen::Vector3f& cameraPos);
+        void ConsolidateChunkMeshes(MeshOutput& out, const Eigen::Vector3f& cameraPos);
     };
 
 } // namespace reconstruction

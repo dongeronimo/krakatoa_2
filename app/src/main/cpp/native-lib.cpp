@@ -40,6 +40,7 @@
 #include "tsdf_volume.h"
 #include "tsdf_fusion_op.h"
 #include "chisel_bridge/chisel_manager.h"
+std::string gChunkStoragePath;  // app-internal dir for serialized TSDF chunks
 std::unique_ptr<graphics::VkContext> gVkContext = nullptr;
 std::unique_ptr<graphics::SwapchainRenderPass> gSwapChainRenderPass = nullptr;
 std::unique_ptr<graphics::OffscreenRenderPass> gOffscreenRenderPass = nullptr;
@@ -82,6 +83,25 @@ Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
 
 void UpdateARPlanes();
 void DrawOffscreenRenderPass(VkCommandBuffer cmd, const uint32_t frameIndex);
+
+/// Extract Context.getFilesDir().getAbsolutePath() via JNI reflection.
+static std::string GetFilesDir(JNIEnv* env, jobject activity) {
+    jclass activityClass = env->GetObjectClass(activity);
+    jmethodID getFilesDir = env->GetMethodID(activityClass, "getFilesDir", "()Ljava/io/File;");
+    jobject fileObj = env->CallObjectMethod(activity, getFilesDir);
+    jclass fileClass = env->GetObjectClass(fileObj);
+    jmethodID getAbsolutePath = env->GetMethodID(fileClass, "getAbsolutePath", "()Ljava/lang/String;");
+    auto jPath = (jstring)env->CallObjectMethod(fileObj, getAbsolutePath);
+    const char* cPath = env->GetStringUTFChars(jPath, nullptr);
+    std::string result(cPath);
+    env->ReleaseStringUTFChars(jPath, cPath);
+    env->DeleteLocalRef(jPath);
+    env->DeleteLocalRef(fileObj);
+    env->DeleteLocalRef(fileClass);
+    env->DeleteLocalRef(activityClass);
+    return result;
+}
+
 extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCreated(JNIEnv *env,
@@ -94,6 +114,9 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceCrea
     AAssetManager* nativeAssetManager = AAssetManager_fromJava(env, asset_manager);
     assert(nativeAssetManager!= nullptr);//i MUST have the asset loader
     io::AssetLoader::initialize(nativeAssetManager);
+
+    // Get app-internal storage path for TSDF chunk paging
+    gChunkStoragePath = GetFilesDir(env, activity) + "/tsdf_chunks";
 
     assert(loadedArcore);//i need arcore.
     // Create vulkan context (instance, physical device, device, semaphores, pipelines)
@@ -408,7 +431,8 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
                 0.03f,   // carvingDist:     3cm
                 true,    // enableCarving
                 16,      // chunkSizeVoxels
-                0        // threadCount: auto-detect
+                0,       // threadCount: auto-detect
+                gChunkStoragePath  // disk paging directory
             );
             LOGI("[TSDF] Initialized ChiselManager on first depth frame (%dx%d)", arDepthWidth, arDepthHeight);
         }
