@@ -167,7 +167,7 @@ namespace reconstruction {
         // GetStats), so this cap directly controls frustum size.
         // At 1cm voxels, 1.5m gives ~600 frustum chunks vs ~2000 at 3.5m.
         constexpr float kNearPlane = 0.1f;
-        constexpr float kFarPlane = 5.0f;
+        constexpr float kFarPlane = 1.5f;
         auto depthImage = std::make_shared<chisel::DepthImage<float>>(input.width, input.height);
         float* depthPtr = depthImage->GetMutableData();
         float maxObservedDepth = 0.0f;
