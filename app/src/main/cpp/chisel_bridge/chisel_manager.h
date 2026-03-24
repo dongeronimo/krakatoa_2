@@ -123,7 +123,7 @@ namespace reconstruction {
         /// How many TSDF integrations to run before extracting a new mesh.
         /// Lower = more responsive visuals but slower integration throughput.
         /// Higher = faster convergence & carving but choppier mesh updates.
-        static constexpr int MESH_EVERY_N_INTEGRATIONS = 5;
+        static constexpr int MESH_EVERY_N_INTEGRATIONS = 10;
 
         int integrationsSinceMesh_ = 0;
 
