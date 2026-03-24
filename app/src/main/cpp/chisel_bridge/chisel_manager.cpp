@@ -466,8 +466,6 @@ namespace reconstruction {
         std::sort(visible.begin(), visible.end(),
                   [](const VisibleChunk& a, const VisibleChunk& b) { return a.distSq < b.distSq; });
 
-        // Vertex budget: leave 5% headroom below the Vulkan buffer limit
-        static constexpr uint32_t VERTEX_BUDGET = static_cast<uint32_t>(WORLD_MESH_MAX_VERTICES * 0.95);
         uint32_t vertexOffset = 0;
 
         for (const auto& vc : visible) {

@@ -98,6 +98,10 @@ namespace reconstruction {
         /// Maximum number of chunks kept in RAM (CPU budget).
         static constexpr size_t MAX_CHUNKS = 8000;
 
+        /// Maximum vertices the consolidated mesh may contain.
+        /// Must be ≤ WORLD_MESH_MAX_VERTICES (the Vulkan buffer size).
+        static constexpr uint32_t VERTEX_BUDGET = 1900000;
+
         /// Maximum distance (meters) from camera for chunks to be included in
         /// the consolidated mesh sent to the GPU. Chunks beyond this radius
         /// are still in RAM but not rendered — saves GPU bandwidth.
