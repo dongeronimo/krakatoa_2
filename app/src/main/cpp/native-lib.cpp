@@ -417,8 +417,14 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     // Advance the world mesh ring buffer for this frame
     gWorldMesh->Advance();
 
+    // ── Depth recovery: if we're tracking but depth has been null for too
+    //    long, pause/resume the session to kick the depth pipeline back on.
+    static int consecutiveDepthNulls = 0;
+    static constexpr int DEPTH_RECOVERY_THRESHOLD = 90; // ~1.5s at 60fps
+
     ArImage* depthImageHandle = gArSessionManager->getDepthImage();
     if (depthImageHandle != nullptr) {
+        consecutiveDepthNulls = 0; // reset on any successful acquire
         int32_t arDepthWidth = 0, arDepthHeight = 0;
         gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
 
@@ -505,8 +511,20 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     } else {
         static int depthNullCount = 0;
         depthNullCount++;
+        consecutiveDepthNulls++;
         if (depthNullCount <= 3 || depthNullCount % 120 == 0) {
-            LOGI("[TSDF] getDepthImage returned nullptr (%d times so far)", depthNullCount);
+            LOGI("[TSDF] getDepthImage returned nullptr (%d times so far, %d consecutive)",
+                 depthNullCount, consecutiveDepthNulls);
+        }
+        // If we're still tracking but depth has been dead for a while,
+        // pause/resume the session to restart the depth estimator.
+        if (consecutiveDepthNulls == DEPTH_RECOVERY_THRESHOLD
+            && gArSessionManager->isTracking()) {
+            LOGW("[TSDF] Depth null for %d consecutive frames while tracking — "
+                 "cycling session to recover depth pipeline", consecutiveDepthNulls);
+            gArSessionManager->onPause();
+            gArSessionManager->onResume();
+            consecutiveDepthNulls = 0; // give it another chance
         }
     }
 
