@@ -75,6 +75,12 @@ std::unique_ptr<reconstruction::ChiselManager> gChiselManager = nullptr;
 std::unique_ptr<graphics::Texture2D> gMeshTexture = nullptr;
 std::unique_ptr<graphics::Pipeline> gWorldMeshPipeline = nullptr;
 std::unique_ptr<graphics::Renderable> gWorldMeshRenderable = nullptr;
+/**
+ * Use this flag to control whether arcore is on or not.
+ * In the future it should begin as false and be turned on when we have the permissions
+ * we need.*/
+bool gArIsActive = true;
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_MainActivity_stringFromJNI(
         JNIEnv* env,
@@ -412,7 +418,71 @@ void CollectPipelineGarbage() ;
 void AdvanceThingsInBeginningOfFrame(VkSemaphore& acquireSem,
                                      uint32_t& imageIndex,
                                      VkCommandBuffer& cmd,
-                                     uint32_t& frameIndex) ;
+                                     uint32_t& frameIndex);
+/**
+* Get camera intrinsics scaled to depth resolution.
+* ArCamera_getImageIntrinsics returns values for the full-resolution CPU image
+* (e.g. 1920x1080), but the depth image is lower-res (e.g. 240x180).
+* Scale fx/fy/cx/cy by the ratio so they match the depth image pixel grid.
+*/
+void GetIntrinsics(int32_t arDepthWidth, int32_t arDepthHeight,
+                   ar::ArDepthIntrinsics& arDepthIntrinsics,
+                   float& scaleX, float& scaleY){
+    gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
+    scaleX = static_cast<float>(arDepthWidth)  / static_cast<float>(arDepthIntrinsics.w);
+    scaleY = static_cast<float>(arDepthHeight) / static_cast<float>(arDepthIntrinsics.h);
+    if (depthFrameCount <= 3) {
+        LOGI("[TSDF] intrinsics: cam(%dx%d) fx=%.1f fy=%.1f cx=%.1f cy=%.1f → depth scale %.3f x %.3f → fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
+             arDepthIntrinsics.w, arDepthIntrinsics.h,
+             arDepthIntrinsics.fx, arDepthIntrinsics.fy,
+             arDepthIntrinsics.cx, arDepthIntrinsics.cy,
+             scaleX, scaleY,
+             arDepthIntrinsics.fx * scaleX, arDepthIntrinsics.fy * scaleY,
+             arDepthIntrinsics.cx * scaleX, arDepthIntrinsics.cy * scaleY);
+    }
+}
+void GetDepthData(ArImage* depthImageHandle, std::vector<uint16_t>& depthData) {
+    int32_t depthStride = 0;
+    gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
+}
+/**
+ * Chisel manager is initialzied lazily, once we have a depth image and we know
+ * it's width and height.
+ * */
+void InitializeOpenChisel(
+                          int32_t arDepthWidth,
+                          int32_t arDepthHeight) {
+    if (!gChiselManager->IsInitialized()) {
+        assert(arDepthWidth > 0 && arDepthHeight > 0 && "Depth image has zero dimensions");
+        gChiselManager->Initialize(
+                0.02f,   // voxelResolution: 2cm voxels (each 16³ chunk = 32cm per side)
+                0.04f,   // truncationDist:  4cm (2× voxel size, tighter surface band)
+                0.10f,   // carvingDist:     10cm (carve zone starts close to surface)
+                true,    // enableCarving
+                16,      // chunkSizeVoxels
+                0,       // threadCount: auto-detect
+                gChunkStoragePath  // disk paging directory
+        );
+        LOGI("[TSDF] Initialized ChiselManager on first depth frame (%dx%d)", arDepthWidth, arDepthHeight);
+    }
+}
+// Queue frame for async integration (non-blocking)
+void IntegrateAsync(const std::vector<uint16_t>& depthData,
+                    const int32_t arDepthWidth, const int32_t arDepthHeight,
+                    const ar::ArDepthIntrinsics& arDepthIntrinsics,
+                    const float scaleX, const float scaleY,
+                    const std::array<float, 16> arViewMatrix){
+    reconstruction::ChiselManager::FrameInput frameInput;
+    frameInput.depthData = depthData;
+    frameInput.width = arDepthWidth;
+    frameInput.height = arDepthHeight;
+    frameInput.fx = arDepthIntrinsics.fx * scaleX;
+    frameInput.fy = arDepthIntrinsics.fy * scaleY;
+    frameInput.cx = arDepthIntrinsics.cx * scaleX;
+    frameInput.cy = arDepthIntrinsics.cy * scaleY;
+    frameInput.viewMatrix = arViewMatrix;
+    gChiselManager->IntegrateFrame(frameInput);
+}
 /**
  * This is the main loop.
  * */
@@ -435,79 +505,34 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     /////////////////////////////
     // Advance the world mesh ring buffer for this frame
     gWorldMesh->Advance();
-
-    ArImage* depthImageHandle = gArSessionManager->getDepthImage();
-    if (depthImageHandle != nullptr) {
-        depthFrameCount++;
-        int32_t arDepthWidth = 0, arDepthHeight = 0;
-        gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
-
-        // Lazy-init OpenChisel on first valid depth frame
-        if (!gChiselManager->IsInitialized()) {
-            assert(arDepthWidth > 0 && arDepthHeight > 0 && "Depth image has zero dimensions");
-            gChiselManager->Initialize(
-                0.02f,   // voxelResolution: 2cm voxels (each 16³ chunk = 32cm per side)
-                0.04f,   // truncationDist:  4cm (2× voxel size, tighter surface band)
-                0.10f,   // carvingDist:     10cm (carve zone starts close to surface)
-                true,    // enableCarving
-                16,      // chunkSizeVoxels
-                0,       // threadCount: auto-detect
-                gChunkStoragePath  // disk paging directory
-            );
-            LOGI("[TSDF] Initialized ChiselManager on first depth frame (%dx%d)", arDepthWidth, arDepthHeight);
-        }
-
-        // Get depth data from ARCore
-        int32_t depthStride = 0;
-        std::vector<uint16_t> depthData{};
-        gArSessionManager->getDepthImageData(depthImageHandle, depthData, depthStride);
-        gArSessionManager->releaseDepthImage(depthImageHandle);
-
-        // Diagnostic: check depth data quality
-        CheckDepthDataQuality(depthData, arDepthWidth, arDepthHeight);
-        // Get camera intrinsics scaled to depth resolution.
-        // ArCamera_getImageIntrinsics returns values for the full-resolution CPU image
-        // (e.g. 1920x1080), but the depth image is lower-res (e.g. 240x180).
-        // Scale fx/fy/cx/cy by the ratio so they match the depth image pixel grid.
-        ar::ArDepthIntrinsics arDepthIntrinsics{};
-        gArSessionManager->getCameraIntrinsics(arDepthIntrinsics);
-        float scaleX = static_cast<float>(arDepthWidth)  / static_cast<float>(arDepthIntrinsics.w);
-        float scaleY = static_cast<float>(arDepthHeight) / static_cast<float>(arDepthIntrinsics.h);
-
-        if (depthFrameCount <= 3) {
-            LOGI("[TSDF] intrinsics: cam(%dx%d) fx=%.1f fy=%.1f cx=%.1f cy=%.1f → depth scale %.3f x %.3f → fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
-                 arDepthIntrinsics.w, arDepthIntrinsics.h,
-                 arDepthIntrinsics.fx, arDepthIntrinsics.fy,
-                 arDepthIntrinsics.cx, arDepthIntrinsics.cy,
-                 scaleX, scaleY,
-                 arDepthIntrinsics.fx * scaleX, arDepthIntrinsics.fy * scaleY,
-                 arDepthIntrinsics.cx * scaleX, arDepthIntrinsics.cy * scaleY);
-        }
-
-        // Get the PHYSICAL (sensor-oriented) view matrix for TSDF integration.
-        // ArCamera_getViewMatrix is display-oriented (rotated to match screen),
-        // but the depth image and ArCamera_getImageIntrinsics are in the
-        // unrotated sensor frame. Using the physical pose from ArCamera_getPose
-        // ensures the view matrix matches the depth data coordinate system.
-        std::array<float, 16> arViewMatrix{};
-        gArSessionManager->getSensorViewMatrix(arViewMatrix.data());
-
-        // Queue frame for async integration (non-blocking)
-        reconstruction::ChiselManager::FrameInput frameInput;
-        frameInput.depthData = std::move(depthData);
-        frameInput.width = arDepthWidth;
-        frameInput.height = arDepthHeight;
-        frameInput.fx = arDepthIntrinsics.fx * scaleX;
-        frameInput.fy = arDepthIntrinsics.fy * scaleY;
-        frameInput.cx = arDepthIntrinsics.cx * scaleX;
-        frameInput.cy = arDepthIntrinsics.cy * scaleY;
-        frameInput.viewMatrix = arViewMatrix;
-        gChiselManager->IntegrateFrame(frameInput);
-    } else {
-        static int depthNullCount = 0;
-        depthNullCount++;
-        if (depthNullCount <= 3 || depthNullCount % 120 == 0) {
-            LOGI("[TSDF] getDepthImage returned nullptr (%d times so far)", depthNullCount);
+    if(gArIsActive) {
+        ArImage *depthImageHandle = gArSessionManager->getDepthImage();
+        if(depthImageHandle != nullptr) {
+            //advance the ar frame counter
+            depthFrameCount++;
+            //get image data and properties
+            int32_t arDepthWidth = 0, arDepthHeight = 0;
+            gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
+            std::vector<uint16_t> depthData{};
+            GetDepthData(depthImageHandle, depthData);
+            CheckDepthDataQuality(depthData, arDepthWidth, arDepthHeight);
+            //release the image handle, we are done with it.
+            gArSessionManager->releaseDepthImage(depthImageHandle);
+            std::array<float, 16> arViewMatrix{};
+            gArSessionManager->getSensorViewMatrix(arViewMatrix.data());
+            float scaleX, scaleY;
+            ar::ArDepthIntrinsics arDepthIntrinsics{};
+            GetIntrinsics(arDepthWidth, arDepthHeight, arDepthIntrinsics, scaleX, scaleY);
+            //initialize openChisel if not initialized yet
+            InitializeOpenChisel(arDepthWidth, arDepthHeight);
+            //we now have a chisel manager active, we can certainly accumulate the depth data.
+            IntegrateAsync(depthData, arDepthWidth, arDepthHeight, arDepthIntrinsics, scaleX, scaleY, arViewMatrix);
+        } else {
+            static int depthNullCount = 0;
+            depthNullCount++;
+            if (depthNullCount <= 3 || depthNullCount % 120 == 0) {
+                LOGI("[TSDF] getDepthImage returned nullptr (%d times so far)", depthNullCount);
+            }
         }
     }
 
