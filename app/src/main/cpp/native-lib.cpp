@@ -726,7 +726,7 @@ void UpdateARPlanes() {
             return;
         assert(meshData->indexCount > 0);
         assert(meshData->vertexCount > 0);
-        //TODO: Seek renderables by plane id
+        //Seek renderables by plane id
         auto itPlanes = gArPlanes.find(planeid);
         if(itPlanes == gArPlanes.end()) {
             //no plane with this id, create a new renderable, with a new mutable mesh and add to the plane.
@@ -743,10 +743,10 @@ void UpdateARPlanes() {
             newMesh->Advance();
         }
         auto planeRenderable = gArPlanes[planeid];
-        //TODO: update the mutable mesh
+        //update the mutable mesh
         auto mutableMesh = reinterpret_cast<graphics::MutableMesh*>(planeRenderable->GetMesh());
         mutableMesh->UpdateMesh(meshData->vertices.data(), meshData->vertexCount, meshData->indices.data(), meshData->indexCount);
-        //TODO: update the model transform of the renderable
+        //update the model transform of the renderable
         planeRenderable->GetTransform().SetFromMatrixPtr(modelMat);
         auto msg = Concatenate("[arplanes] updated plane ", planeid);
         LOGI("%s", msg.c_str());
