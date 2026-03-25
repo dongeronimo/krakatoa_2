@@ -396,6 +396,33 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnSurfaceDest
 }
 int32_t previousArDepthWidth = 0;
 uint32_t gFrameCount = 0;  // for throttling compute dispatches
+int depthFrameCount = 0;
+/**
+ * This function reports the quality of the AR Depth Buffer bc sometimes the Ar depth capture dies
+ * */
+void CheckDepthDataQuality(const std::vector<uint16_t>& depthData, const int32_t arDepthWidth, const int32_t arDepthHeight){
+    if (depthFrameCount <= 5 || depthFrameCount % 60 == 0) {
+        int nonZero = 0;
+        uint16_t minVal = UINT16_MAX, maxVal = 0;
+        for (uint16_t v : depthData) {
+            if (v > 0) {
+                nonZero++;
+                if (v < minVal) minVal = v;
+                if (v > maxVal) maxVal = v;
+            }
+        }
+        LOGI("[TSDF] depth frame %d: %dx%d, %d/%zu non-zero (%.1f%%), range %u-%u mm",
+             depthFrameCount, arDepthWidth, arDepthHeight,
+             nonZero, depthData.size(),
+             depthData.empty() ? 0.0 : 100.0 * nonZero / depthData.size(),
+             nonZero > 0 ? (unsigned)minVal : 0u,
+             nonZero > 0 ? (unsigned)maxVal : 0u);
+    }
+}
+
+/**
+ * This is the main loop.
+ * */
 extern "C"
 JNIEXPORT void JNICALL
 Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(JNIEnv *env,
@@ -440,6 +467,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
 
     ArImage* depthImageHandle = gArSessionManager->getDepthImage();
     if (depthImageHandle != nullptr) {
+        depthFrameCount++;
         int32_t arDepthWidth = 0, arDepthHeight = 0;
         gArSessionManager->getDepthImageDimensions(depthImageHandle, arDepthWidth, arDepthHeight);
 
@@ -465,26 +493,7 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
         gArSessionManager->releaseDepthImage(depthImageHandle);
 
         // Diagnostic: check depth data quality
-        static int depthFrameCount = 0;
-        depthFrameCount++;
-        if (depthFrameCount <= 5 || depthFrameCount % 60 == 0) {
-            int nonZero = 0;
-            uint16_t minVal = UINT16_MAX, maxVal = 0;
-            for (uint16_t v : depthData) {
-                if (v > 0) {
-                    nonZero++;
-                    if (v < minVal) minVal = v;
-                    if (v > maxVal) maxVal = v;
-                }
-            }
-            LOGI("[TSDF] depth frame %d: %dx%d, %d/%zu non-zero (%.1f%%), range %u-%u mm",
-                 depthFrameCount, arDepthWidth, arDepthHeight,
-                 nonZero, depthData.size(),
-                 depthData.empty() ? 0.0 : 100.0 * nonZero / depthData.size(),
-                 nonZero > 0 ? (unsigned)minVal : 0u,
-                 nonZero > 0 ? (unsigned)maxVal : 0u);
-        }
-
+        CheckDepthDataQuality(depthData, arDepthWidth, arDepthHeight);
         // Get camera intrinsics scaled to depth resolution.
         // ArCamera_getImageIntrinsics returns values for the full-resolution CPU image
         // (e.g. 1920x1080), but the depth image is lower-res (e.g. 240x180).
