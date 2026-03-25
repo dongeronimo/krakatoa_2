@@ -400,53 +400,28 @@ int depthFrameCount = 0;
 /**
  * This function reports the quality of the AR Depth Buffer bc sometimes the Ar depth capture dies
  * */
-void CheckDepthDataQuality(const std::vector<uint16_t>& depthData, const int32_t arDepthWidth, const int32_t arDepthHeight){
-    if (depthFrameCount <= 5 || depthFrameCount % 60 == 0) {
-        int nonZero = 0;
-        uint16_t minVal = UINT16_MAX, maxVal = 0;
-        for (uint16_t v : depthData) {
-            if (v > 0) {
-                nonZero++;
-                if (v < minVal) minVal = v;
-                if (v > maxVal) maxVal = v;
-            }
-        }
-        LOGI("[TSDF] depth frame %d: %dx%d, %d/%zu non-zero (%.1f%%), range %u-%u mm",
-             depthFrameCount, arDepthWidth, arDepthHeight,
-             nonZero, depthData.size(),
-             depthData.empty() ? 0.0 : 100.0 * nonZero / depthData.size(),
-             nonZero > 0 ? (unsigned)minVal : 0u,
-             nonZero > 0 ? (unsigned)maxVal : 0u);
-    }
-}
-
+void CheckDepthDataQuality(const std::vector<uint16_t>& depthData, const int32_t arDepthWidth, const int32_t arDepthHeight);
 /**
- * This is the main loop.
+ *  Garbage-collect unused uniform buffers AFTER the fence wait guarantees
+ *  that command buffers from the oldest in-flight frame are done.
+ *  Must NOT run during command buffer recording (would destroy bound resources).
  * */
-extern "C"
-JNIEXPORT void JNICALL
-Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(JNIEnv *env,
-                                                                               jobject thiz) {
-
-    gFrameSync->WaitForCurrentFrame();
-    // Garbage-collect unused uniform buffers AFTER the fence wait guarantees
-    // that command buffers from the oldest in-flight frame are done.
-    // Must NOT run during command buffer recording (would destroy bound resources).
+void CollectPipelineGarbage() {
     if (gTransparentPhongPipeline) gTransparentPhongPipeline->CollectGarbage();
     if (gWorldMeshPipeline) gWorldMeshPipeline->CollectGarbage();
     if (gCameraBgPipeline) gCameraBgPipeline->CollectGarbage();
     if (gComposePipeline) gComposePipeline->CollectGarbage();
-
-    gFrameTimer->Tick();
-    gFrameSync->AdvanceFrame();
-    VkSemaphore acquireSem = gFrameSync->GetNextAcquireSemaphore();
+}
+/**
+ * Advances the command pool, gets the frame semaphore, etc...*/
+void AdvanceThingsInBeginningOfFrame(VkSemaphore& acquireSem,
+                                     uint32_t& imageIndex,
+                                     VkCommandBuffer& cmd,
+                                     uint32_t& frameIndex) {
+    gFrameSync->AdvanceFrame(); // Advance the fence
+    acquireSem = gFrameSync->GetNextAcquireSemaphore();//Aquire the semaphore.
     gCommandPoolManager->AdvanceFrame();
     gCameraImage->AdvanceFrame();
-    // Update ARCore first - acquires CPU camera image (YUV planes)
-    m_eglDummy.makeCurrent();
-    gArSessionManager->onDrawFrame();
-
-    uint32_t imageIndex;
     vkAcquireNextImageKHR(gVkContext->GetDevice(), gVkContext->GetSwapchain(),
                           UINT64_MAX, acquireSem, VK_NULL_HANDLE, &imageIndex);
 
@@ -454,9 +429,29 @@ Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(J
     gFrameSync->SetImageFence(imageIndex, gFrameSync->GetInFlightFence());
     gFrameSync->ResetCurrentFence();
 
+    // Update ARCore first - acquires CPU camera image (YUV planes)
+    m_eglDummy.makeCurrent();
+    gArSessionManager->onDrawFrame();
+
     gCommandPoolManager->BeginFrame();
-    VkCommandBuffer cmd = gCommandPoolManager->GetCurrentCommandBuffer();
-    const uint32_t frameIndex = gVkContext->GetFrameIndex();
+    cmd = gCommandPoolManager->GetCurrentCommandBuffer();
+    frameIndex = gVkContext->GetFrameIndex();
+}
+/**
+ * This is the main loop.
+ * */
+extern "C"
+JNIEXPORT void JNICALL
+Java_dev_geronimodesenvolvimentos_krakatoa_VulkanSurfaceView_nativeOnDrawFrame(JNIEnv *env,
+                                                                               jobject thiz) {
+    gFrameSync->WaitForCurrentFrame();//Wait in the fence until we can do current frame.
+    CollectPipelineGarbage();//The pipelines may have garbage, we need to collect it before we do anything else
+    gFrameTimer->Tick();//Advance the times
+    gFrameSync->AdvanceFrame(); // Advance the fence
+
+    VkSemaphore acquireSem = VK_NULL_HANDLE; VkCommandBuffer cmd = VK_NULL_HANDLE;
+    uint32_t imageIndex = UINT32_MAX; uint32_t frameIndex = UINT32_MAX;
+    AdvanceThingsInBeginningOfFrame(acquireSem, imageIndex, cmd, frameIndex);
     /////////////////////////////
     // ── OpenChisel TSDF reconstruction ──────────────────────────────────
     // Depth data is sent to the ChiselManager worker thread for integration.
@@ -831,4 +826,24 @@ void DrawOffscreenRenderPass(VkCommandBuffer cmd, const uint32_t frameIndex){
         gWorldMeshPipeline->Draw(cmd, &rdo, gWorldMeshRenderable.get(), frameIndex);
     }
     gOffscreenRenderPass->End(cmd);
+}
+
+void CheckDepthDataQuality(const std::vector<uint16_t>& depthData, const int32_t arDepthWidth, const int32_t arDepthHeight){
+    if (depthFrameCount <= 5 || depthFrameCount % 60 == 0) {
+        int nonZero = 0;
+        uint16_t minVal = UINT16_MAX, maxVal = 0;
+        for (uint16_t v : depthData) {
+            if (v > 0) {
+                nonZero++;
+                if (v < minVal) minVal = v;
+                if (v > maxVal) maxVal = v;
+            }
+        }
+        LOGI("[TSDF] depth frame %d: %dx%d, %d/%zu non-zero (%.1f%%), range %u-%u mm",
+             depthFrameCount, arDepthWidth, arDepthHeight,
+             nonZero, depthData.size(),
+             depthData.empty() ? 0.0 : 100.0 * nonZero / depthData.size(),
+             nonZero > 0 ? (unsigned)minVal : 0u,
+             nonZero > 0 ? (unsigned)maxVal : 0u);
+    }
 }
