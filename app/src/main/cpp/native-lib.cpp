@@ -406,37 +406,13 @@ void CheckDepthDataQuality(const std::vector<uint16_t>& depthData, const int32_t
  *  that command buffers from the oldest in-flight frame are done.
  *  Must NOT run during command buffer recording (would destroy bound resources).
  * */
-void CollectPipelineGarbage() {
-    if (gTransparentPhongPipeline) gTransparentPhongPipeline->CollectGarbage();
-    if (gWorldMeshPipeline) gWorldMeshPipeline->CollectGarbage();
-    if (gCameraBgPipeline) gCameraBgPipeline->CollectGarbage();
-    if (gComposePipeline) gComposePipeline->CollectGarbage();
-}
+void CollectPipelineGarbage() ;
 /**
  * Advances the command pool, gets the frame semaphore, etc...*/
 void AdvanceThingsInBeginningOfFrame(VkSemaphore& acquireSem,
                                      uint32_t& imageIndex,
                                      VkCommandBuffer& cmd,
-                                     uint32_t& frameIndex) {
-    gFrameSync->AdvanceFrame(); // Advance the fence
-    acquireSem = gFrameSync->GetNextAcquireSemaphore();//Aquire the semaphore.
-    gCommandPoolManager->AdvanceFrame();
-    gCameraImage->AdvanceFrame();
-    vkAcquireNextImageKHR(gVkContext->GetDevice(), gVkContext->GetSwapchain(),
-                          UINT64_MAX, acquireSem, VK_NULL_HANDLE, &imageIndex);
-
-    gFrameSync->WaitForImage(imageIndex);
-    gFrameSync->SetImageFence(imageIndex, gFrameSync->GetInFlightFence());
-    gFrameSync->ResetCurrentFence();
-
-    // Update ARCore first - acquires CPU camera image (YUV planes)
-    m_eglDummy.makeCurrent();
-    gArSessionManager->onDrawFrame();
-
-    gCommandPoolManager->BeginFrame();
-    cmd = gCommandPoolManager->GetCurrentCommandBuffer();
-    frameIndex = gVkContext->GetFrameIndex();
-}
+                                     uint32_t& frameIndex) ;
 /**
  * This is the main loop.
  * */
@@ -846,4 +822,36 @@ void CheckDepthDataQuality(const std::vector<uint16_t>& depthData, const int32_t
              nonZero > 0 ? (unsigned)minVal : 0u,
              nonZero > 0 ? (unsigned)maxVal : 0u);
     }
+}
+
+void CollectPipelineGarbage() {
+    if (gTransparentPhongPipeline) gTransparentPhongPipeline->CollectGarbage();
+    if (gWorldMeshPipeline) gWorldMeshPipeline->CollectGarbage();
+    if (gCameraBgPipeline) gCameraBgPipeline->CollectGarbage();
+    if (gComposePipeline) gComposePipeline->CollectGarbage();
+}
+/**
+ * Advances the command pool, gets the frame semaphore, etc...*/
+void AdvanceThingsInBeginningOfFrame(VkSemaphore& acquireSem,
+                                     uint32_t& imageIndex,
+                                     VkCommandBuffer& cmd,
+                                     uint32_t& frameIndex) {
+    gFrameSync->AdvanceFrame(); // Advance the fence
+    acquireSem = gFrameSync->GetNextAcquireSemaphore();//Aquire the semaphore.
+    gCommandPoolManager->AdvanceFrame();
+    gCameraImage->AdvanceFrame();
+    vkAcquireNextImageKHR(gVkContext->GetDevice(), gVkContext->GetSwapchain(),
+                          UINT64_MAX, acquireSem, VK_NULL_HANDLE, &imageIndex);
+
+    gFrameSync->WaitForImage(imageIndex);
+    gFrameSync->SetImageFence(imageIndex, gFrameSync->GetInFlightFence());
+    gFrameSync->ResetCurrentFence();
+
+    // Update ARCore first - acquires CPU camera image (YUV planes)
+    m_eglDummy.makeCurrent();
+    gArSessionManager->onDrawFrame();
+
+    gCommandPoolManager->BeginFrame();
+    cmd = gCommandPoolManager->GetCurrentCommandBuffer();
+    frameIndex = gVkContext->GetFrameIndex();
 }
